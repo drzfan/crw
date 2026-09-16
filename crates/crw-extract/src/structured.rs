@@ -667,6 +667,18 @@ struct OpenAiRequest {
     /// this is the chat-completions transport catching up.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<serde_json::Value>,
+    /// Reasoning budget, forwarded when configured.
+    ///
+    /// This builder is separate from the one in `llm.rs`, which has always sent
+    /// this field, and the omission here is not cosmetic: on a reasoning model
+    /// the default budget is spent on every call. Measured on `deepseek-flash`
+    /// over four pages, this path spends 8086 completion tokens with reasoning
+    /// left at its default and 201 with it set to "none". Structured extraction
+    /// is the highest-volume LLM path (`formats:["json"]`, `/v1/extract`,
+    /// `/v2/parse`) and the change-tracking judge shares this builder, so the
+    /// difference lands on nearly every managed call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -835,6 +847,14 @@ pub(crate) async fn call_openai(
             tool_choice: forcing.then(
                 || serde_json::json!({ "type": "function", "function": { "name": tool_name } }),
             ),
+            // Same guard as `llm.rs`: a configured-but-empty value serializes as
+            // `""` and providers that validate the field answer 400, so an empty
+            // string counts as unset.
+            reasoning_effort: llm
+                .reasoning_effort
+                .as_deref()
+                .filter(|v| !v.is_empty())
+                .map(str::to_string),
         };
 
         let resp = crate::llm::send_provider_post(

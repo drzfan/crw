@@ -198,3 +198,91 @@ async fn non_retryable_status_errors_on_first_response() {
     assert!(res.is_err());
     assert_eq!(seen.load(Ordering::SeqCst), 1, "400 must not be retried");
 }
+
+// ── Structured-extraction path ───────────────────────────────────────────────
+//
+// `structured.rs` builds its own request, separate from the `chat()` builder
+// above, and for a long time had no `reasoning_effort` field at all. That gap
+// mattered the moment the managed model became a reasoning model: this is the
+// highest-volume LLM path we have (`formats:["json"]`, `/v1/extract`,
+// `/v2/parse`) and the change-tracking judge shares the same builder, so a
+// missing field here means nearly every managed call pays a reasoning budget
+// nobody asked for. Measured on `deepseek-flash` over four pages: 8086
+// completion tokens at the default, 201 with "none".
+
+fn tool_call_response() -> serde_json::Value {
+    json!({
+        "choices": [{
+            "message": {
+                "tool_calls": [{
+                    "type": "function",
+                    "function": { "name": "emit", "arguments": "{\"title\":\"x\"}" }
+                }]
+            }
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+    })
+}
+
+async fn run_structured(llm: &LlmConfig) -> Vec<serde_json::Value> {
+    let schema = json!({
+        "type": "object",
+        "properties": { "title": { "type": "string" } }
+    });
+    let _ = crw_extract::structured::extract_structured_with_usage(
+        "# A page\n\nSome content.",
+        Some(&schema),
+        None,
+        llm,
+        None,
+    )
+    .await;
+    vec![]
+}
+
+#[tokio::test]
+async fn structured_forwards_reasoning_effort_when_set() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(tool_call_response()))
+        .mount(&server)
+        .await;
+
+    let mut llm = mock_llm(format!("{}/v1", server.uri()));
+    llm.reasoning_effort = Some("none".into());
+    let _ = run_structured(&llm).await;
+
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        !requests.is_empty(),
+        "the structured call must reach the server"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(
+        body.get("reasoning_effort").and_then(|v| v.as_str()),
+        Some("none"),
+        "structured extraction must forward the configured reasoning budget"
+    );
+}
+
+#[tokio::test]
+async fn structured_omits_reasoning_effort_when_unset_or_empty() {
+    for configured in [None, Some(String::new())] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tool_call_response()))
+            .mount(&server)
+            .await;
+
+        let mut llm = mock_llm(format!("{}/v1", server.uri()));
+        llm.reasoning_effort = configured.clone();
+        let _ = run_structured(&llm).await;
+
+        let requests = server.received_requests().await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "an unset or empty budget must not be sent (providers 400 on \"\"), configured={configured:?}"
+        );
+    }
+}
