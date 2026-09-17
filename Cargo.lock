@@ -1045,6 +1045,7 @@ dependencies = [
  "flate2",
  "futures",
  "libc",
+ "moka",
  "phf 0.14.0",
  "proptest",
  "publicsuffix",

@@ -150,7 +150,8 @@ That is the default CRW success shape: requested content plus a compact metadata
 | `filterMode` | string | -- | `bm25` or `cosine` |
 | `topK` | number | `5` | Number of top chunks to keep |
 | `proxy` | string | -- | Per-request proxy URL |
-| `maxAge` | number | `3600000` | Cloud only. How old a cached copy of this exact request may be, in milliseconds. `0` forces a fresh fetch. Capped at 24 hours. See [Caching](#caching) |
+| `maxAge` | number | `3600000` | How old a cached copy of this fetch may be, in milliseconds. `0` forces a fresh fetch. Capped at 24 hours. See [Caching](#caching) |
+| `storeInCache` | boolean | `true` | `false` reads the cache but stores nothing |
 | `country` | string | -- | 2-letter ISO 3166-1 alpha-2 country code (lowercase, e.g. `us`, `gb`, `de`). Routes the request through the named residential pool when the `chrome_proxy` renderer tier is configured. Ignored if no proxy tier is set up. See [JS rendering — Per-request country](#js-rendering) |
 | `stealth` | boolean | -- | Override global stealth setting |
 | `jsonSchema` | object | -- | Schema for structured extraction |
@@ -168,10 +169,18 @@ That is the default CRW success shape: requested content plus a compact metadata
 
 ## Caching
 
-On the hosted API an identical repeat of the same request is served from cache
-for one hour by default. Identical means the whole request body: a different
-`formats`, `renderer`, `onlyMainContent` or `country` is a different request and
-fetches fresh. Caches are per account, never shared between customers.
+A repeat of the same fetch is served from cache for one hour by default. What
+is cached is the FETCH, not the answer, so what counts as identical is what
+would change the page the server gets back: the URL, `renderer`, `renderJs`,
+`waitFor`, `country`, and any headers you send. Everything you do with the page
+afterwards is not part of it, so a second pass with different `formats`,
+`onlyMainContent`, selectors or a different extraction schema reuses the fetch
+instead of paying for it again.
+
+Requests that carry anything caller-specific are never cached at all: your own
+headers, your own proxy, a stealth override, or a screenshot. A cached page is
+therefore only ever a plain anonymous fetch of a public URL, byte for byte what
+any caller would have received.
 
 ```json
 { "url": "https://example.com", "formats": ["markdown"], "maxAge": 0 }
@@ -187,6 +196,9 @@ Use `maxAge` to choose your own trade-off:
 
 `0` disables the cache for that call and always fetches. The ceiling is 24 hours,
 so a page can never be pinned for longer than a day.
+
+A response served from cache says so: `cached: true` on `/v1`, and
+`metadata.cacheState: "hit"` on the Firecrawl-compatible surface.
 
 Two things are never cached, whatever you pass:
 

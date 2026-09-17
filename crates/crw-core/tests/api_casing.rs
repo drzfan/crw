@@ -96,6 +96,7 @@ fn sample_scrape_data() -> ScrapeData {
         screenshot: Some("data:image/png;base64,AAAA".into()),
         block: None,
         truncated: false,
+        cached: false,
     }
 }
 

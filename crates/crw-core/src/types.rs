@@ -367,6 +367,16 @@ pub struct ScrapeRequest {
     /// it directly (`screenshotFullPage`), defaulting to viewport-only.
     #[serde(default, alias = "screenshot_full_page")]
     pub screenshot_full_page: bool,
+    /// How old a cached copy of this fetch may be, in milliseconds. `None` is
+    /// the published default (one hour), `0` always fetches, and anything above
+    /// the 24 hour ceiling is clamped. Documented at `docs/docs/scraping.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age: Option<u64>,
+    /// Firecrawl's write switch: `false` reads the cache but never writes to
+    /// it. Reading stays allowed because the field is about what we keep, not
+    /// about what we may reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_in_cache: Option<bool>,
 }
 
 /// A document parser directive (Firecrawl `parsers` entry). Accepts either the
@@ -489,6 +499,8 @@ impl Default for ScrapeRequest {
             judge_enabled: None,
             parsers: None,
             screenshot_full_page: false,
+            max_age: None,
+            store_in_cache: None,
         }
     }
 }
@@ -767,6 +779,13 @@ pub struct ScrapeData {
     /// Credit cost attributed to this page (0 = not yet priced).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub credit_cost: u32,
+    /// True when this page came from the fetch cache instead of the network.
+    /// Surfaces as `cacheState` on the Firecrawl-compat surface and as `cached`
+    /// on the native one, so a caller can always tell a replay from a fresh
+    /// fetch. Omitted when false, which keeps every existing response byte
+    /// identical.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cached: bool,
     pub metadata: PageMetadata,
     /// Extraction debug trace; populated only when the request opts in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1320,6 +1339,7 @@ mod tests {
                 reason: "cloudflare challenge interstitial".into(),
             }),
             truncated: false,
+            cached: false,
         }
     }
 
@@ -1598,6 +1618,7 @@ mod tests {
                 reason: "cloudflare challenge interstitial".into(),
             }),
             truncated: false,
+            cached: false,
         };
         data.clear_body();
         // content-shell + LLM outputs cleared
@@ -1984,6 +2005,7 @@ mod tests {
             screenshot: None,
             block: None,
             truncated: false,
+            cached: false,
         }
     }
 

@@ -112,7 +112,7 @@ pub fn to_v2_document(data: ScrapeData, proxy_used: &str, scrape_id: String) -> 
         status_code: m.status_code,
         content_type: data.content_type.clone(),
         proxy_used: proxy_used.to_string(),
-        cache_state: "miss".to_string(),
+        cache_state: if data.cached { "hit" } else { "miss" }.to_string(),
         concurrency_limited: false,
         // Engine does not price requests (the SaaS layer bills); surface
         // whatever the engine attributed, defaulting to 1 like the live API.
@@ -437,6 +437,7 @@ mod tests {
             screenshot: None,
             block: None,
             truncated: false,
+            cached: false,
         }
     }
 

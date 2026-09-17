@@ -649,7 +649,7 @@ Every v2 scrape and batch/crawl document follows this shape. Fields are omitted 
 | Field | v1 | v2 |
 |---|---|---|
 | `metadata.proxyUsed` | not present | `"basic"` or `"stealth"` |
-| `metadata.cacheState` | not present | always `"miss"` (no cache yet) |
+| `metadata.cacheState` | `cached` (omitted when false) | `"hit"` or `"miss"` |
 | `metadata.concurrencyLimited` | not present | always `false` |
 | `metadata.creditsUsed` | not present | integer (≥ 1) |
 | `metadata.scrapeId` | not present | per-document UUID |
@@ -664,7 +664,9 @@ Every v2 scrape and batch/crawl document follows this shape. Fields are omitted 
 
 ### `cacheState`
 
-Always `"miss"` in the current engine. The field exists for Firecrawl SDK compatibility.
+`"hit"` when the page was replayed from the fetch cache, `"miss"` when it was
+fetched. `maxAge` and `storeInCache` are honoured on this surface: see
+[Caching](scraping.md#caching) for what is cached and what never is.
 
 ---
 

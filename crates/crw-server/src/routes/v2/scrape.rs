@@ -19,9 +19,9 @@ use crate::error::AppError;
 use crate::state::{AppState, validate_renderer_pin};
 
 /// v2 `/v2/scrape` request. Lenient: unknown fields the SDK may send
-/// (`mobile`, `actions`, `blockAds`, `storeInCache`, `maxAge`,
-/// `origin`, `integration`, …) are ignored by serde — we must NOT
-/// `deny_unknown_fields` or a newer SDK build would 400.
+/// (`mobile`, `actions`, `blockAds`, `origin`, `integration`, …) are ignored by
+/// serde. We must NOT `deny_unknown_fields` or a newer SDK build would 400.
+/// `maxAge` and `storeInCache` used to be on that list; they are honoured now.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct V2ScrapeRequest {
@@ -36,6 +36,15 @@ pub struct V2ScrapeRequest {
     pub exclude_tags: Vec<String>,
     #[serde(default)]
     pub wait_for: Option<u64>,
+    /// How old a cached copy may be, in milliseconds. The SDK has always sent
+    /// this and we always ignored it. Firecrawl's own default is two days,
+    /// above our published 24 hour ceiling, so an unset value takes our default
+    /// and an explicit larger one is clamped rather than honoured.
+    #[serde(default, deserialize_with = "lenient_u64")]
+    pub max_age: Option<u64>,
+    /// Firecrawl's write switch: `false` reads the cache but stores nothing.
+    #[serde(default, deserialize_with = "lenient_bool")]
+    pub store_in_cache: Option<bool>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
     /// v2 `location` object. `country` is lowercased and mapped to the engine's
@@ -138,6 +147,42 @@ pub(crate) fn proxy_tier(proxy: &str) -> &'static str {
 
 /// Convert a v2 scrape request into the internal `ScrapeRequest` + the
 /// decomposed-format side-data + the resolved proxy tier.
+/// Accept anything for `maxAge` and fall back to "unset" rather than 400.
+///
+/// These two fields were previously unknown-and-ignored, so an SDK sending a
+/// string or a float got a working request. Typing them must not turn that into
+/// a rejection: this surface exists to swallow whatever the SDK sends.
+fn lenient_u64<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Number(n) => {
+            n.as_u64().or_else(|| n.as_f64().map(|f| f.max(0.0) as u64))
+        }
+        serde_json::Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    })
+}
+
+/// Same leniency for `storeInCache`.
+fn lenient_bool<'de, D>(d: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Bool(b) => Some(b),
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 pub(crate) fn to_internal(
     v2: V2ScrapeRequest,
 ) -> Result<(ScrapeRequest, formats::DecomposedFormats, String), CrwError> {
@@ -193,6 +238,8 @@ pub(crate) fn to_internal(
             }),
         change_tracking: decomposed.change_tracking.clone(),
         screenshot_full_page: decomposed.screenshot_full_page,
+        max_age: v2.max_age,
+        store_in_cache: v2.store_in_cache,
         country,
         deadline_ms: v2.timeout,
         llm_api_key: v2.llm_api_key,
@@ -480,6 +527,7 @@ mod tests {
             screenshot: None,
             block: None,
             truncated: false,
+            cached: false,
         };
         to_v2_document(data, "basic", "id".into())
     }
