@@ -5,8 +5,12 @@
 //! counting real fetches proves the fetch was actually skipped, and that a
 //! bypass really did go back to the network.
 //!
-//! The cache is process-global, so each test starts its own mock server and
-//! therefore works on its own URL and its own key.
+//! The cache is process-global and these tests run in parallel in one process,
+//! so every test must work on a URL no other test can produce. A mock server
+//! alone is not enough: wiremock pools and reuses its servers, so a dropped
+//! server's port comes back and two tests can end up with the same URL, the
+//! same cache key, and each other's entries. Each test therefore mounts its own
+//! PATH as well.
 
 use std::sync::Arc;
 
@@ -42,10 +46,11 @@ fn body() -> String {
     )
 }
 
-async fn page_server() -> (MockServer, String) {
+async fn page_server(name: &str) -> (MockServer, String) {
     let server = MockServer::start().await;
+    let route = format!("/{name}");
     Mock::given(method("GET"))
-        .and(path("/page"))
+        .and(path(route.clone()))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/html; charset=utf-8")
@@ -53,7 +58,7 @@ async fn page_server() -> (MockServer, String) {
         )
         .mount(&server)
         .await;
-    let url = format!("{}/page", server.uri());
+    let url = format!("{}{}", server.uri(), route);
     (server, url)
 }
 
@@ -91,7 +96,7 @@ fn req(url: &str) -> ScrapeRequest {
 /// The headline claim: the same page twice costs one fetch.
 #[tokio::test]
 async fn a_repeat_scrape_does_not_reach_the_origin() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("repeat").await;
 
     let first = run(&req(&url)).await;
     assert!(!first.cached, "the first scrape cannot be a hit");
@@ -108,7 +113,7 @@ async fn a_repeat_scrape_does_not_reach_the_origin() {
 /// the multi-pass extraction shape, minus the LLM leg.
 #[tokio::test]
 async fn different_output_options_share_one_fetch() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("outputs").await;
 
     run(&req(&url)).await;
     assert_eq!(fetches(&server).await, 1);
@@ -129,7 +134,7 @@ async fn different_output_options_share_one_fetch() {
 /// The documented escape hatch has to actually reach the network.
 #[tokio::test]
 async fn max_age_zero_always_fetches() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("maxage").await;
 
     run(&req(&url)).await;
     let second = run(&ScrapeRequest {
@@ -147,7 +152,7 @@ async fn max_age_zero_always_fetches() {
 /// silent wrong answer rather than a visible error.
 #[tokio::test]
 async fn change_tracking_never_reads_the_cache() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("changetracking").await;
 
     run(&req(&url)).await;
     assert_eq!(fetches(&server).await, 1);
@@ -179,7 +184,7 @@ async fn change_tracking_never_reads_the_cache() {
 /// page. It belongs in the key.
 #[tokio::test]
 async fn a_country_change_is_a_different_fetch() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("country").await;
 
     run(&req(&url)).await;
     let elsewhere = run(&ScrapeRequest {
@@ -197,7 +202,7 @@ async fn a_country_change_is_a_different_fetch() {
 /// readable by anyone else, however the key is shaped.
 #[tokio::test]
 async fn a_request_with_caller_headers_is_never_cached() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("headers").await;
 
     let with_headers = ScrapeRequest {
         headers: [("Cookie".to_string(), "session=alice".to_string())]
@@ -227,7 +232,7 @@ async fn a_request_with_caller_headers_is_never_cached() {
 /// unit tests, which can vary that input directly.
 #[tokio::test]
 async fn without_a_browser_tier_every_reader_shares_one_fetch() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("notier").await;
 
     run(&req(&url)).await;
     let raw = run(&ScrapeRequest {
@@ -245,7 +250,7 @@ async fn without_a_browser_tier_every_reader_shares_one_fetch() {
 /// but must leave nothing behind.
 #[tokio::test]
 async fn store_in_cache_false_writes_nothing() {
-    let (server, url) = page_server().await;
+    let (server, url) = page_server("nostore").await;
 
     let first = run(&ScrapeRequest {
         store_in_cache: Some(false),
@@ -266,11 +271,11 @@ async fn store_in_cache_false_writes_nothing() {
 async fn a_failing_page_is_never_cached() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/page"))
+        .and(path("/failing"))
         .respond_with(ResponseTemplate::new(500).set_body_string("upstream is down"))
         .mount(&server)
         .await;
-    let url = format!("{}/page", server.uri());
+    let url = format!("{}/failing", server.uri());
 
     let _ = scrape_url(
         &req(&url),
