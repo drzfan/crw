@@ -26,6 +26,15 @@ pub async fn scrape(
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false),
     );
+    // Same trusted channel as `x-crw-force-cloak`: `cache_scope` is
+    // `skip_deserializing`, so this header is its only source and a caller
+    // cannot put themselves in someone else's cache scope.
+    req.cache_scope = headers
+        .get("x-crw-cache-scope")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
     let parsed_url = url::Url::parse(&req.url)
         .map_err(|e| CrwError::InvalidRequest(format!("Invalid URL: {e}")))?;
     crw_core::url_safety::validate_safe_url_resolved(&parsed_url)

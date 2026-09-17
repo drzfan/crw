@@ -246,6 +246,39 @@ async fn without_a_browser_tier_every_reader_shares_one_fetch() {
     assert!(raw.raw_html.is_some(), "the new format was still produced");
 }
 
+/// The hosted API promises a cache is never shared between customers. The
+/// engine keeps that promise by never letting an entry cross a tenant scope,
+/// which its front end sets per account.
+#[tokio::test]
+async fn one_tenant_never_reads_another_tenants_page() {
+    let (server, url) = page_server("tenants").await;
+
+    let alice = ScrapeRequest {
+        cache_scope: Some("alice".into()),
+        ..req(&url)
+    };
+    let bob = ScrapeRequest {
+        cache_scope: Some("bob".into()),
+        ..req(&url)
+    };
+
+    let first = run(&alice).await;
+    assert!(!first.cached);
+    assert_eq!(fetches(&server).await, 1);
+
+    let crossed = run(&bob).await;
+    assert!(
+        !crossed.cached,
+        "one tenant was served another tenant's page"
+    );
+    assert_eq!(fetches(&server).await, 2);
+
+    // And each still gets their own repeat for free.
+    assert!(run(&alice).await.cached);
+    assert!(run(&bob).await.cached);
+    assert_eq!(fetches(&server).await, 2);
+}
+
 /// `storeInCache: false` is Firecrawl's write switch: this request may read,
 /// but must leave nothing behind.
 #[tokio::test]

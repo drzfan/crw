@@ -87,6 +87,9 @@ pub struct KeyInputs<'a> {
     /// `FallbackRenderer` is not, so two renderers in one process (a mobile and
     /// a desktop one, say) must not share entries.
     pub user_agent: &'a str,
+    /// Opaque tenant scope. Entries never cross it, which is what keeps the
+    /// hosted API's published per-account promise true through this layer.
+    pub cache_scope: Option<&'a str>,
     /// Whether this request could have escalated to a browser. A fetch that
     /// escalated holds a rendered DOM, which is not what an HTTP-source reader
     /// would have received, so the two must not share an entry.
@@ -139,6 +142,7 @@ pub fn build_key(i: &KeyInputs<'_>) -> String {
     push(i.country.unwrap_or(""));
     push(&i.proxy_id.map(proxy_fingerprint).unwrap_or_default());
     push(i.user_agent);
+    push(i.cache_scope.unwrap_or(""));
     push(if i.may_escalate { "esc=1" } else { "esc=0" });
     for (k, v) in headers {
         push(&k);
@@ -267,6 +271,7 @@ mod tests {
             force_cloak: false,
             country: None,
             proxy_id: None,
+            cache_scope: None,
             user_agent: "crw-test/0.0",
             may_escalate: true,
         }
@@ -362,6 +367,10 @@ mod tests {
             },
             KeyInputs {
                 may_escalate: false,
+                ..inputs("https://example.com", &h)
+            },
+            KeyInputs {
+                cache_scope: Some("tenant-b"),
                 ..inputs("https://example.com", &h)
             },
         ];

@@ -177,10 +177,10 @@ afterwards is not part of it, so a second pass with different `formats`,
 `onlyMainContent`, selectors or a different extraction schema reuses the fetch
 instead of paying for it again.
 
+Caches are per account, never shared between customers.
+
 Requests that carry anything caller-specific are never cached at all: your own
-headers, your own proxy, a stealth override, or a screenshot. A cached page is
-therefore only ever a plain anonymous fetch of a public URL, byte for byte what
-any caller would have received.
+headers, your own proxy, a stealth override, or a screenshot.
 
 ```json
 { "url": "https://example.com", "formats": ["markdown"], "maxAge": 0 }

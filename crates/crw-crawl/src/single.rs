@@ -284,6 +284,7 @@ async fn scrape_url_inner(
             country: req.country.as_deref(),
             proxy_id: proxy_id.as_deref(),
             user_agent,
+            cache_scope: req.cache_scope.as_deref(),
             may_escalate,
         })
     });

@@ -820,6 +820,7 @@ fn build_request(
         // The CLI is a one-shot process: it cannot hit a cache it just built,
         // and someone running `crw scrape` twice wants the page as it is now.
         max_age: Some(0),
+        cache_scope: None,
         store_in_cache: None,
     }
 }

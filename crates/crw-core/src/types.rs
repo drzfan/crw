@@ -377,6 +377,16 @@ pub struct ScrapeRequest {
     /// about what we may reuse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_in_cache: Option<bool>,
+    /// Opaque tenant scope for the page cache. `skip_deserializing`, so a
+    /// caller can never set it: the only source is the `x-crw-cache-scope`
+    /// header our own front end sets, the same channel as `force_cloak`.
+    ///
+    /// Entries are separated by this value, which is how the hosted API keeps
+    /// its published promise that a cache is never shared between customers.
+    /// Unset (self-host, CLI) means one shared scope, which is the right
+    /// behaviour when there is only one tenant.
+    #[serde(skip_deserializing, skip_serializing)]
+    pub cache_scope: Option<String>,
 }
 
 /// A document parser directive (Firecrawl `parsers` entry). Accepts either the
@@ -501,6 +511,7 @@ impl Default for ScrapeRequest {
             screenshot_full_page: false,
             max_age: None,
             store_in_cache: None,
+            cache_scope: None,
         }
     }
 }

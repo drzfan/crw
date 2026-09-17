@@ -1542,8 +1542,15 @@ async fn enrich_with_scrape(
                 // same page. Its short per-URL budget is recorded with the
                 // entry, so a longer-budget caller is never served a page this
                 // path had to cut short.
-                max_age: None,
-                store_in_cache: None,
+                // Search enrichment does not use the page cache. It could only
+                // reach the unscoped bucket from here (`search_inner` never sees
+                // the request headers, so it has no tenant scope to pass), and
+                // on a hosted deployment nothing may land in a bucket that is
+                // shared between customers. SERP URLs are mostly distinct
+                // anyway, so there is little to win.
+                max_age: Some(0),
+                store_in_cache: Some(false),
+                cache_scope: None,
             };
             let deadline = Deadline::from_request_ms(deadline_ms);
             let result = scrape_url(
