@@ -835,3 +835,61 @@ fn text_plain_source_markdown_is_byte_for_byte_passthrough() {
         "html must be byte-for-byte"
     );
 }
+
+/// Page builders use `<header>` as a generic layout wrapper, so the candidate
+/// ladder's structural rung has to be able to back out of its own pruning.
+/// Without the survival floor this page extracts to nothing: every rung above
+/// the raw document removes the `<header>` that holds the entire article.
+#[test]
+fn structural_rung_backs_out_when_it_would_delete_the_page() {
+    let body = "Cog is a tool that lets you package machine learning models in a \
+                reproducible container. It reads a configuration file, builds the \
+                image, and gives the model a prediction interface over HTTP. \
+                Packaging a model this way means the same weights and the same \
+                preprocessing run identically on a laptop and on a GPU server, \
+                which is the part teams usually get wrong when they hand a model \
+                over to someone else to deploy.";
+    let html = format!(
+        "<html><head><title>Packaging models</title></head><body>\
+         <header class=\"page-wrap\"><h1>Packaging models</h1>\
+         <p>{body}</p><p>{body}</p><p>{body}</p></header>\
+         <div class=\"legal\">© 2026</div></body></html>"
+    );
+
+    let data = crw_extract::extract(ExtractOptions {
+        raw_html: &html,
+        content_type: None,
+        source_url: "https://example.com/packaging",
+        status_code: 200,
+        rendered_with: None,
+        elapsed_ms: 0,
+        render_decision: None,
+        credit_cost: 0,
+        warnings: Vec::new(),
+        formats: &[OutputFormat::Markdown],
+        only_main_content: true,
+        include_tags: &[],
+        exclude_tags: &[],
+        css_selector: None,
+        xpath: None,
+        chunk_strategy: None,
+        query: None,
+        filter_mode: None,
+        top_k: None,
+        domain_selectors: None,
+        captured_responses: &[],
+        llm_fallback: None,
+        debug: false,
+        debug_sink: None,
+        normalize_tables: false,
+    })
+    .unwrap();
+
+    let md = data.markdown.unwrap_or_default();
+    assert!(
+        md.contains("reproducible container"),
+        "the article lives inside <header>; the structural rung must back out \
+         rather than delete it. got {} chars:\n{md}",
+        md.len()
+    );
+}

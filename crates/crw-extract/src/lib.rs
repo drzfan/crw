@@ -563,25 +563,81 @@ pub fn extract(opts: ExtractOptions<'_>) -> CrwResult<ScrapeData> {
                     candidates.push(("cleaned", m, q));
                 }
 
-                // Alt 2: whole-page clean without only_main_content, i.e. the page
-                // with its nav/footer intact. It is the rescue candidate for pages
-                // where readability narrows onto the wrong container.
+                // Alt 2: the widest cleaned view of the page. It rescues the
+                // pages where readability narrows onto the wrong container, and
+                // the ones where Alt 1's class-name rules mistook a theme's
+                // naming for chrome and took the body with it.
                 //
-                // Known wart: because the quality score rewards word count, that
-                // boilerplate bulk is also what lets this candidate win on
-                // page-builder sites, which is how a mega menu reaches the markdown
-                // even for onlyMainContent requests. Making it honour
-                // only_main_content fixes those pages but costs recall on the
-                // frozen 1000-URL set (0.3828 -> 0.3651), so it is left alone here.
-                let basic_cleaned = clean::clean_html_with_warnings(
+                // On the only_main_content path it stops at structural chrome:
+                // `nav`, site `header`/`footer`/`aside`, `menu` and `select` are
+                // gone, the class-name rules are not applied. It used to be the
+                // raw page with everything intact, which is how a government
+                // portal shipped its mega menu, footer, cookie banner and survey
+                // popup for an onlyMainContent request: the score rewards word
+                // count, so the chrome was exactly what made this candidate win.
+                //
+                // Dropping the rung altogether is worse than leaving it raw.
+                // Measured on a 111-page corpus: it emptied pages whose body only
+                // this candidate was carrying (2,203 -> 39 tokens on tibet.net,
+                // 20,736 -> 74 on takko.com). Cleaning it instead of deleting it
+                // keeps the rescue and loses the chrome. No reference
+                // implementation keeps a raw whole-page rung either: Defuddle
+                // loosens one filter category at a time and stays anchored to its
+                // entry selector, and trafilatura makes a challenger beat the
+                // incumbent by a ratio rather than by raw length.
+                let chrome_cleaned = clean::clean_html_at(
                     raw_html,
-                    false,
+                    clean::CleanDepth::Chrome,
                     include_tags,
                     exclude_tags,
                     &mut warnings,
                 )
                 .unwrap_or_else(|_| raw_html.to_string());
-                let basic_md = markdown::html_to_markdown_with(&basic_cleaned, normalize_tables);
+                let chrome_md = markdown::html_to_markdown_with(&chrome_cleaned, normalize_tables);
+
+                // Structural chrome removal has to be able to back out. Page
+                // builders use `nav`, `header` and `footer` as generic layout
+                // wrappers, so on those sites this rung does not trim the page,
+                // it deletes it: measured on the frozen set it took 85% of the
+                // words on social27.com and 90% on an overland schools page,
+                // both of which keep their body inside those tags.
+                //
+                // trafilatura guards its own pruning exactly this way and reverts
+                // the whole prune when less than a seventh of the text survives
+                // (htmlprocessing.py:145-162). Defuddle spares a `<header>` that
+                // contains real paragraphs for the same reason. Below the floor
+                // this rung falls back to the chrome-only clean, which is what
+                // the candidate used to be, so the rescue is never worse than it
+                // was before.
+                //
+                // A seventh is also what a sweep over the frozen set picked. From
+                // 1/6 to 1/8 truth recall is flat at -0.61pt and 1/7 removes the
+                // most boilerplate (-7.27pt of noise, -9.0% tokens). Loosening to
+                // 1/4 buys back 0.15pt of recall but reverts the prune on the
+                // government portal this was built for, putting its whole mega
+                // menu back: that page survives at between a sixth and a fifth of
+                // its text, the Shopify product page above a quarter, and the
+                // page-builder sites that must be spared between 0.1% and 3%.
+                const STRUCTURAL_SURVIVAL_FLOOR: usize = 7;
+                let (basic_cleaned, basic_md) = if only_main_content {
+                    let structural = clean::clean_html_at(
+                        raw_html,
+                        clean::CleanDepth::Structural,
+                        include_tags,
+                        exclude_tags,
+                        &mut warnings,
+                    )
+                    .unwrap_or_else(|_| raw_html.to_string());
+                    let structural_md =
+                        markdown::html_to_markdown_with(&structural, normalize_tables);
+                    if structural_md.len() * STRUCTURAL_SURVIVAL_FLOOR < chrome_md.len() {
+                        (chrome_cleaned, chrome_md)
+                    } else {
+                        (structural, structural_md)
+                    }
+                } else {
+                    (chrome_cleaned, chrome_md)
+                };
                 let basic_q = quality::analyze_md_only(&basic_md);
                 candidates.push(("basic_clean", basic_md, basic_q));
 

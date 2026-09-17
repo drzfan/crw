@@ -26,16 +26,38 @@ pub struct Quality {
     pub score: f32,
 }
 
-/// Weight of the nav-line penalty in the composite score.
+/// Most of a candidate's volume score the nav discount can take away.
 ///
-/// Zero on purpose. Penalising nav here demotes the one candidate that carried
-/// the article body on docs and help-centre pages, where a long sidebar sits
-/// beside real prose, and the ladder then falls through to a thin candidate
-/// that lost the body (measured: 63 real phrases dropped across 25 pages).
-/// Nav is removed from the winner instead, by [`strip_nav_lines`], which keeps
-/// the body and drops the menu. The field is still computed because that
-/// removal and its content floor are both driven by it.
-const CHROME_WEIGHT: f32 = 0.0;
+/// The discount is a multiplier, not a subtraction. An additive nav penalty
+/// cannot do this job: word count contributes up to 1.0 to the score, so any
+/// fixed penalty small enough to be safe is also small enough for boilerplate
+/// bulk to buy its way past. A mega menu worth 500 words adds about 0.6 and
+/// used to lose at most 0.2, which is why the whole-page candidate won on
+/// navigation-heavy pages. Scaled instead, the same candidate keeps half its
+/// volume at most, and volume alone can no longer outrank a clean extraction.
+///
+/// Every reference implementation scales rather than subtracts: Readability
+/// uses `contentScore * (1 - linkDensity)`, Defuddle
+/// `score * (1 - min(linkDensity, 0.5))` — this cap mirrors Defuddle's.
+const CHROME_DISCOUNT_CAP: f32 = 0.5;
+
+/// Non-chrome words that exempt a candidate from the discount entirely.
+///
+/// This is the carve-out an earlier additive experiment lacked, and the reason
+/// that experiment was reverted to a weight of zero: a docs or help-centre page
+/// is a real article sitting beside a long sidebar of short-label links, so
+/// penalising it demoted the one candidate that still held the article and the
+/// ladder fell through to a thinner one (measured: 63 real phrases dropped
+/// across 25 pages). A candidate that carries this much body text has an
+/// article in it whatever else it also carries, and [`strip_nav_lines`] removes
+/// the sidebar from the winner afterwards anyway.
+///
+/// Both upstream implementations needed an exemption of the same shape:
+/// Readability spares a container whose text is over 90% inside real
+/// `<ul>`/`<ol>`, trafilatura spares one-link-per-paragraph listings. Ours is
+/// expressed on surviving body words because that is the signal the regression
+/// actually turned on.
+const CHROME_EXEMPT_BODY_WORDS: usize = 200;
 
 /// Longest visible line still treated as a possible nav entry. Menu labels are
 /// short; a link-heavy line longer than this is usually a real sentence that
@@ -355,10 +377,23 @@ pub fn analyze(markdown: &str, dom: Option<&DomFeatures>) -> Quality {
         t * t
     };
     let dom_density_bonus = dom.map(|d| 0.4 * d.text_density as f32).unwrap_or(0.0);
-    let mut score = (words.min(800) as f32 / 800.0) + dom_density_bonus
+
+    // Scale the volume terms by how much of the text is bare navigation, unless
+    // enough real body survives the chrome to say there is an article in here.
+    // Only the volume half is scaled: that is the term boilerplate inflates,
+    // and multiplying a composite that can go negative would turn a penalty
+    // into a reward.
+    let body_words = words.saturating_sub(chrome_words);
+    let chrome_discount = if body_words >= CHROME_EXEMPT_BODY_WORDS {
+        1.0
+    } else {
+        1.0 - chrome_ratio.min(CHROME_DISCOUNT_CAP)
+    };
+    let volume = (words.min(800) as f32 / 800.0) + dom_density_bonus;
+
+    let mut score = volume * chrome_discount
         - 0.2 * link_penalty
         - 1.0 * boilerplate_ratio
-        - CHROME_WEIGHT * chrome_ratio
         - 0.3 * (1.0 - unique_ratio);
     score = score.clamp(-1.0, 2.0);
 
