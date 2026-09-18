@@ -17,6 +17,7 @@ import type {
   ExtractStatus,
   Json,
   MapOptions,
+  MapResult,
   ParseFileOptions,
   ParseResult,
   ScrapeOptions,
@@ -52,6 +53,23 @@ function httpOnlyHint(name: string, reason: string): string {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Pick `crw_map`'s payload out of whichever shape the local `crw-mcp` returned.
+ * It answers flat (`{success, links, sitemaps}`) when it runs embedded and with
+ * the REST envelope (`{success, data: {…}}`) when it proxies. It proxies
+ * whenever `CRW_API_URL` is set, which the subprocess inherits from us even
+ * though CRW_LOCAL mode never reads that variable itself. Without this, `links`
+ * came back empty in that state.
+ *
+ * Probe `data.links` rather than a bare `data`, so a flat response that grows
+ * some unrelated top-level `data` later cannot make us unwrap into it. Same
+ * discriminator the engine's own MCP bounds use.
+ */
+function mapPayload(result: Json): Json {
+  const envelope = result.data as Json | null | undefined;
+  return envelope && typeof envelope === "object" && "links" in envelope ? envelope : result;
+}
 
 /**
  * Next page request, rebuilt from OUR base path + the cursor's skip/limit. The
@@ -132,15 +150,29 @@ export class CrwClient {
     return this.pollLocalCrawl(jobId, pollInterval, timeout);
   }
 
-  async map(url: string, opts: MapOptions = {}): Promise<string[]> {
+  async map(url: string, opts: MapOptions = {}): Promise<MapResult> {
     const { maxDepth = 2, useSitemap = true, ...rest } = opts;
     const args: Json = { url, maxDepth, useSitemap, ...rest };
-    if (this.apiUrl) {
-      const data = await this.httpPost("/v1/map", args);
-      return (data.links as string[]) ?? [];
-    }
-    const result = await this.localTransport().toolCall("crw_map", args);
-    return (result.links as string[]) ?? [];
+    const data = this.apiUrl
+      ? await this.httpPost("/v1/map", args)
+      : mapPayload(await this.localTransport().toolCall("crw_map", args));
+    // Guard the shapes, as search() does before its own attach: a self-hosted
+    // server or gateway answering `{"links": "none"}` would otherwise make
+    // Object.defineProperty throw, or smuggle a non-array out typed as string[].
+    const links = (Array.isArray(data.links) ? (data.links as string[]) : []) as MapResult;
+    // `sitemaps` rides BESIDE `links` in the engine's response and the old
+    // unwrap dropped it: a caller could not see which sitemaps a site exposes
+    // even though they paid for the discovery. Attach it the way search()
+    // attaches its answer siblings: non-enumerably, so `links.sitemaps` works
+    // while `for…of`, spread and JSON.stringify keep seeing exactly the array
+    // they saw before.
+    Object.defineProperty(links, "sitemaps", {
+      value: Array.isArray(data.sitemaps) ? (data.sitemaps as string[]) : [],
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return links;
   }
 
   /**

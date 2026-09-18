@@ -108,7 +108,8 @@ for u in urls[:3]:
 }
 ```
 
-> The Python SDK's `client.map()` returns the `links` list directly, not the full envelope.
+> The Python SDK's `client.map()` returns the `links` list directly, not the full
+> envelope. The discovered sitemaps come back on that list as `.sitemaps`.
 
 ---
 

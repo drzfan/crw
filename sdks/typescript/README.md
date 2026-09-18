@@ -49,7 +49,7 @@ CRW_LOCAL=1 node app.js
 |---|---|---|
 | `scrape(url, opts?)` | Scrape one URL | both |
 | `crawl(url, opts?)` | Crawl a site (async, polled) | both |
-| `map(url, opts?)` | Discover URLs | both |
+| `map(url, opts?)` | Discover URLs (+ the site's `sitemaps`) | both |
 | `search(query, opts?)` | Web search (+ optional scrape) | both¹ |
 | `parseFile(bytes, opts?)` | PDF → markdown / structured JSON | both |
 | `extract({urls, schema?})` | Structured LLM extraction | HTTP |

@@ -54,6 +54,15 @@ class TestMapIntegration:
         assert len(links) >= 1
         assert all(isinstance(link, str) for link in links)
 
+    def test_map_exposes_sitemaps(self, cloud_client: CrwClient) -> None:
+        # Assert the value, not just the attribute: hasattr() cannot fail once
+        # the attribute exists, so it would pass on a build that never fills it.
+        # docs.fastcrw.com is built from this repo, so its sitemap is ours to
+        # keep serving; the marketing site's is not.
+        links = cloud_client.map("https://docs.fastcrw.com")
+        assert links.sitemaps, "engine reported no sitemaps for a site that has one"
+        assert all(s.startswith("http") for s in links.sitemaps)
+
 
 @pytest.mark.integration
 @pytest.mark.timeout(30)

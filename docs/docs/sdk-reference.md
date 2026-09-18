@@ -211,13 +211,28 @@ Discover all reachable URLs on a site without scraping page content.
 ```python
 # Python
 urls = client.map("https://example.com", max_depth=2, use_sitemap=True)
-print(urls)  # ["https://example.com/about", ...]
+print(urls)            # ["https://example.com/about", ...]
+print(urls.sitemaps)   # ["https://example.com/sitemap.xml", ...]
 ```
 
 ```ts
 // TypeScript
 const urls = await crw.map("https://example.com", { maxDepth: 2, useSitemap: true });
+console.log(urls);            // ["https://example.com/about", ...]
+console.log(urls.sitemaps);   // ["https://example.com/sitemap.xml", ...]
 ```
+
+The sitemap URLs the engine read ride on the returned list as `sitemaps`. The
+list is empty when the site exposes no sitemap or `useSitemap` is off, and
+partial when discovery stops early on `limit`, `timeout` or the internal sitemap
+budget; in local (subprocess) mode the MCP layer caps it at the map limit, so a
+deep sitemap index reports fewer entries there than over HTTP. Iteration,
+indexing, `len` and JSON serialization are unchanged, so existing code keeps
+working; in Python
+the value is now a `list` subclass, so an exact `type(x) is list` check no longer
+matches. Because `sitemaps` is an attribute on the list rather than an element of
+it, it does not carry over to a new list built by a transform (slicing,
+`sorted()`, spread, `structuredClone`); read it off the returned value directly.
 
 ### search
 

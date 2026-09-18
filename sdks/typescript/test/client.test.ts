@@ -7,6 +7,7 @@ import {
   CrwExtractCancelledError,
   CrwTimeoutError,
 } from "../dist/esm/index.js";
+import { localChildEnv } from "../dist/esm/local.js";
 
 const origFetch = globalThis.fetch;
 const origEnv = { ...process.env };
@@ -335,6 +336,137 @@ test("capabilities unwraps and uses GET /v1/capabilities", async () => {
   const caps = await c.capabilities();
   assert.equal(calls[0].url, `${CLOUD_API_URL}/v1/capabilities`);
   assert.equal((caps as { version: string }).version, "0.14.0");
+});
+
+test("map returns the links array with sitemaps attached", async () => {
+  const calls = mockFetch({
+    success: true,
+    data: {
+      links: ["https://example.com/a", "https://example.com/b"],
+      sitemaps: ["https://example.com/sitemap.xml"],
+    },
+    creditCost: 1,
+  });
+  const c = new CrwClient({ apiKey: "crw_live_test" });
+  const links = await c.map("https://example.com");
+  assert.equal(calls[0].url, `${CLOUD_API_URL}/v1/map`);
+  assert.deepEqual([...links], ["https://example.com/a", "https://example.com/b"]);
+  // The whole point of #557: the sitemaps the engine reported are reachable.
+  const sitemaps: string[] = links.sitemaps ?? [];
+  assert.deepEqual(sitemaps, ["https://example.com/sitemap.xml"]);
+});
+
+test("map normalizes a missing sitemaps field to an empty list", async () => {
+  // An engine old enough not to send the key must not surface `undefined`,
+  // so `links.sitemaps.length` is always safe.
+  mockFetch({ success: true, data: { links: ["https://example.com/a"] } });
+  const c = new CrwClient({ apiKey: "crw_live_test" });
+  const links = await c.map("https://example.com");
+  assert.deepEqual(links.sitemaps, []);
+  assert.equal(links.sitemaps.length, 0);
+});
+
+test("map result is still a plain array for existing callers", async () => {
+  mockFetch({
+    success: true,
+    data: { links: ["https://example.com/a"], sitemaps: ["https://example.com/sitemap.xml"] },
+  });
+  const c = new CrwClient({ apiKey: "crw_live_test" });
+  const links = await c.map("https://example.com");
+  assert.ok(Array.isArray(links));
+  assert.equal(links.length, 1);
+  assert.equal([...links].length, 1);
+  // `sitemaps` is non-enumerable, so nothing an existing caller does changes.
+  assert.equal(JSON.stringify(links), JSON.stringify(["https://example.com/a"]));
+  assert.deepEqual(Object.keys(links), ["0"]);
+});
+
+/**
+ * Drive local (subprocess) mode without a real crw-mcp: stand a stub in for the
+ * transport the client would otherwise spawn. Mirrors the Python suite's
+ * `patch.object(client, "_tool_call", ...)`.
+ */
+function localClientReturning(toolResult: unknown) {
+  process.env.CRW_LOCAL = "1";
+  const c = new CrwClient();
+  (c as unknown as { local: { toolCall: () => Promise<unknown>; close: () => void } }).local = {
+    toolCall: async () => toolResult,
+    close: () => {},
+  };
+  return c;
+}
+
+test("map survives a malformed links/sitemaps body", async () => {
+  // A self-hosted server or gateway can answer anything; neither field may
+  // throw out of the SDK or escape typed as string[] when it is not one.
+  mockFetch({ success: true, data: { links: "none", sitemaps: 3 } });
+  const c = new CrwClient({ apiKey: "crw_live_test" });
+  const links = await c.map("https://example.com");
+  assert.ok(Array.isArray(links));
+  assert.deepEqual([...links], []);
+  assert.deepEqual(links.sitemaps, []);
+});
+
+test("map in local mode reads the flat embedded shape", async () => {
+  const c = localClientReturning({
+    success: true,
+    links: ["https://example.com/a"],
+    sitemaps: ["https://example.com/sitemap.xml"],
+  });
+  const links = await c.map("https://example.com");
+  assert.deepEqual([...links], ["https://example.com/a"]);
+  assert.deepEqual(links.sitemaps, ["https://example.com/sitemap.xml"]);
+});
+
+test("map in local mode unwraps the proxy REST envelope", async () => {
+  // A crw-mcp that inherited CRW_API_URL proxies and answers with the envelope.
+  // Without the unwrap this returned [] and dropped sitemaps entirely.
+  const c = localClientReturning({
+    success: true,
+    data: {
+      links: ["https://example.com/a"],
+      sitemaps: ["https://example.com/sitemap.xml"],
+    },
+    creditCost: 1,
+  });
+  const links = await c.map("https://example.com");
+  assert.deepEqual([...links], ["https://example.com/a"]);
+  assert.deepEqual(links.sitemaps, ["https://example.com/sitemap.xml"]);
+});
+
+test("map in local mode ignores an unrelated top-level data field", async () => {
+  // The probe is `data.links`, not a bare `data`: a flat response that grows
+  // some other top-level `data` must not be unwrapped into.
+  const c = localClientReturning({
+    success: true,
+    links: ["https://example.com/a"],
+    sitemaps: ["https://example.com/sitemap.xml"],
+    data: { note: 1 },
+  });
+  const links = await c.map("https://example.com");
+  assert.deepEqual([...links], ["https://example.com/a"]);
+  assert.deepEqual(links.sitemaps, ["https://example.com/sitemap.xml"]);
+});
+
+test("map in local mode does not unwrap a null data field", async () => {
+  const c = localClientReturning({ success: true, data: null });
+  const links = await c.map("https://example.com");
+  assert.deepEqual([...links], []);
+  assert.deepEqual(links.sitemaps, []);
+});
+
+test("the local subprocess does not inherit CRW_API_URL", () => {
+  // crw-mcp binds CRW_API_URL itself and proxies to the cloud when it is set,
+  // so an inherited one turned CRW_LOCAL into a billed cloud call answering
+  // with the REST envelope instead of the flat payload.
+  process.env.CRW_API_URL = "https://api.fastcrw.com";
+  process.env.CRW_CLIENT__API_URL = "https://api.fastcrw.com";
+  process.env.CRW_API_KEY = "crw_live_test";
+  const env = localChildEnv();
+  assert.equal(env.CRW_API_URL, undefined);
+  assert.equal(env.CRW_CLIENT__API_URL, undefined);
+  // The key is harmless: an embedded child ignores it.
+  assert.equal(env.CRW_API_KEY, "crw_live_test");
 });
 
 // silence unused import lint in some configs

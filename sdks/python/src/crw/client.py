@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
@@ -122,6 +123,77 @@ class SearchResults(list):
     answer: str | None = None
     citations: list | None = None
     llm_usage: dict | None = None
+
+
+class MapLinks(list[str]):
+    """The discovered URLs, with the site's sitemap URLs hanging off them.
+
+    `sitemaps` rides BESIDE `links` in the engine's map response and returning
+    only `links` dropped it. Subclassing `list` keeps every existing caller
+    working (`for u in urls`, indexing, len, `== [...]`) while `urls.sitemaps`
+    becomes reachable.
+
+    Set per instance, never as a class default, so no two results share one list
+    and it is always a list even against an engine old enough not to send the
+    field. It does not survive a transform that builds a new list: slicing, `+`,
+    `sorted()`, `.copy()`, `list(x)`. `copy.copy`, `copy.deepcopy` and `pickle`
+    keep it.
+
+    In local (subprocess) mode the MCP layer caps both lists at its map limit,
+    so a site with a very deep sitemap index reports fewer entries there than
+    over HTTP.
+    """
+
+    def __init__(
+        self,
+        links: Iterable[str] = (),
+        sitemaps: Iterable[str] | None = None,
+    ) -> None:
+        super().__init__(links)
+        self.sitemaps: list[str] = list(sitemaps or [])
+
+
+# Variables that switch `crw-mcp` from embedded to proxy mode. Both are verified
+# against the shipped binary: `CRW_API_URL` is bound by its CLI, and
+# `CRW_CLIENT__API_URL` reaches the same setting through the config layer.
+_PROXY_MODE_ENV_VARS = ("CRW_API_URL", "CRW_CLIENT__API_URL")
+
+
+def _local_child_env() -> dict[str, str]:
+    """Environment for the `crw-mcp` subprocess in CRW_LOCAL mode.
+
+    The child inherits our environment, so either variable above left in the
+    shell silently turned "run the local engine" into "call the cloud": every
+    tool then answered with the REST envelope instead of the flat payload, and
+    the call was billed. CRW_LOCAL means local, so the child does not get them.
+
+    This cannot close every route: `crw-mcp` also reads `client.api_url` from
+    `~/.config/crw/config.toml`, and it has no flag to force embedded mode. That
+    is why `map()` still handles the envelope shape in `_map_payload`.
+
+    Windows needs no case folding here: `os.environ` upper-cases its keys there.
+    """
+    return {k: v for k, v in os.environ.items() if k not in _PROXY_MODE_ENV_VARS}
+
+
+def _map_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Pick `crw_map`'s payload out of whichever shape the local `crw-mcp` sent.
+
+    It answers flat (`{success, links, sitemaps}`) when it runs embedded and
+    with the REST envelope (`{success, data: {...}}`) when it proxies. It
+    proxies whenever `CRW_API_URL` is set, which the subprocess inherits from
+    us even though CRW_LOCAL mode never reads that variable itself. Without
+    this, `links` came back empty in that state.
+
+    Probe `data.links` rather than a bare `data`, so a flat response that grows
+    some unrelated top-level `data` later cannot make us unwrap into it, and a
+    gateway answering `{"data": null}` cannot raise. Same discriminator the
+    engine's own MCP bounds use.
+    """
+    envelope = result.get("data")
+    if isinstance(envelope, dict) and "links" in envelope:
+        return envelope
+    return result
 
 
 class CrwClient:
@@ -265,21 +337,29 @@ class CrwClient:
         max_depth: int = 2,
         use_sitemap: bool = True,
         **kwargs: Any,
-    ) -> list[str]:
+    ) -> MapLinks:
         """Discover URLs on a website.
 
         Returns:
-            List of discovered URLs.
+            The discovered URLs as a list, carrying the site's sitemap URLs on
+            its ``sitemaps`` attribute.
         """
         args: dict[str, Any] = {"url": url, "maxDepth": max_depth, "useSitemap": use_sitemap}
         args.update(kwargs)
 
         if self._api_url:
             data = self._http_post("/v1/map", args)
-            return data.get("links", [])
-
-        result = self._tool_call("crw_map", args)
-        return result.get("links", [])
+        else:
+            data = _map_payload(self._tool_call("crw_map", args))
+        # Guard the shapes so a self-hosted server or gateway answering
+        # `{"links": null}` yields an empty list in both SDKs, rather than
+        # raising here and returning [] in TypeScript.
+        links = data.get("links")
+        sitemaps = data.get("sitemaps")
+        return MapLinks(
+            links if isinstance(links, list) else [],
+            sitemaps if isinstance(sitemaps, list) else [],
+        )
 
     def search(
         self,
@@ -752,6 +832,7 @@ class CrwClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                env=_local_child_env(),
             )
         return self._process
 
@@ -834,7 +915,12 @@ class CrwClient:
             raise CrwApiError(result.get("error", "API error"))
         if raw:
             return result
-        return result.get("data", result)
+        # `.get("data", result)` only covers a MISSING key. A gateway in front
+        # of the engine can answer `{"success": true, "data": null}`, and that
+        # returned None, so the caller raised AttributeError instead of the
+        # empty result TypeScript gives for the same bytes.
+        data = result.get("data")
+        return result if data is None else data
 
     def _http_multipart(self, path: str, body: bytes, content_type: str) -> dict:
         import urllib.request

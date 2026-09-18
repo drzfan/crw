@@ -534,6 +534,27 @@ export interface V2Document {
 export type ScrapeResult = ScrapeDocument;
 /** Crawl (`/v1/crawl`) returns the scraped document for each page, in crawl order. */
 export type CrawlResult = ScrapeDocument[];
+/**
+ * Map (`/v1/map`) returns the discovered URLs, with the sitemap URLs the engine
+ * read attached as `sitemaps`, the same way {@link SearchAnswer} rides
+ * alongside search results. Assignable to `string[]`, so
+ * `const urls: string[] = await crw.map(u)` keeps compiling.
+ *
+ * `sitemaps` is always an array at runtime: the client normalizes a missing
+ * field to `[]`. It is typed optional only so a plain `string[]` still assigns
+ * to this type, which keeps a consumer's own test stub
+ * (`mockResolvedValue(["https://a"])`) compiling. Same shape as
+ * {@link SearchAnswer}. It is non-enumerable, so it does not survive
+ * `structuredClone` (and therefore an RSC, worker or `postMessage` boundary) or
+ * any transform that builds a new array (`slice`, `filter`, spread).
+ * `JSON.stringify` is unaffected, since an array serializes its indices either
+ * way. Read it off the returned array directly.
+ *
+ * In local (subprocess) mode the MCP layer caps both lists at its map limit, so
+ * a site with a very deep sitemap index reports fewer entries there than over
+ * HTTP.
+ */
+export type MapResult = string[] & { sitemaps?: string[] };
 /** Parse (`/v2/parse`) returns a v2 document (markdown/json/metadata). */
 export type ParseResult = V2Document;
 /** Batch scrape (`/v2/batch/scrape`) returns one v2 document per URL. */

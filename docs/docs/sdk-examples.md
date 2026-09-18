@@ -171,14 +171,14 @@ Discover all URLs on a site without downloading page content.
 
 ```python
 urls = client.map("https://example.com", max_depth=2, use_sitemap=True)
-print(f"Found {len(urls)} URLs")
+print(f"Found {len(urls)} URLs across {len(urls.sitemaps)} sitemaps")
 ```
 
 ### TypeScript
 
 ```ts
 const urls = await client.map("https://example.com", { maxDepth: 2, useSitemap: true });
-console.log(`Found ${urls.length} URLs`);
+console.log(`Found ${urls.length} URLs across ${(urls.sitemaps ?? []).length} sitemaps`);
 ```
 
 ### curl (fallback)

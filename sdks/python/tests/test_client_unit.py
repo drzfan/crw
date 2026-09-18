@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from crw.client import CLOUD_API_URL, CrwClient
+from crw.client import CLOUD_API_URL, CrwClient, _local_child_env
 from crw.exceptions import CrwApiError, CrwError, CrwExtractCancelledError, CrwTimeoutError
 
 
@@ -161,6 +161,22 @@ class TestCrawl:
 
 
 @pytest.mark.unit
+class TestLocalChildEnv:
+    def test_crw_api_url_is_not_inherited(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # crw-mcp binds CRW_API_URL itself and proxies to the cloud when it is
+        # set, so an inherited one turned CRW_LOCAL into a billed cloud call
+        # answering with the REST envelope instead of the flat payload.
+        monkeypatch.setenv("CRW_API_URL", "https://api.fastcrw.com")
+        monkeypatch.setenv("CRW_CLIENT__API_URL", "https://api.fastcrw.com")
+        monkeypatch.setenv("CRW_API_KEY", "crw_live_test")
+        env = _local_child_env()
+        assert "CRW_API_URL" not in env
+        assert "CRW_CLIENT__API_URL" not in env
+        # The key is harmless: an embedded child ignores it.
+        assert env["CRW_API_KEY"] == "crw_live_test"
+
+
+@pytest.mark.unit
 class TestMap:
     def test_map_http_returns_links(self) -> None:
         client = CrwClient(api_url="https://fastcrw.com/api", api_key="crw_live_test")
@@ -170,6 +186,118 @@ class TestMap:
             result = client.map("https://example.com")
 
         assert result == ["https://example.com/a", "https://example.com/b"]
+
+    def test_map_http_exposes_sitemaps(self) -> None:
+        client = CrwClient(api_url="https://fastcrw.com/api", api_key="crw_live_test")
+        mock_response = {
+            "links": ["https://example.com/a"],
+            "sitemaps": ["https://example.com/sitemap.xml"],
+        }
+
+        with patch.object(client, "_http_post", return_value=mock_response):
+            result = client.map("https://example.com")
+
+        assert result.sitemaps == ["https://example.com/sitemap.xml"]
+
+    def test_map_missing_sitemaps_is_an_empty_list(self) -> None:
+        # An engine old enough not to send the key must not surface None, so
+        # len(result.sitemaps) is always safe.
+        client = CrwClient(api_url="https://fastcrw.com/api", api_key="crw_live_test")
+
+        with patch.object(client, "_http_post", return_value={"links": []}):
+            result = client.map("https://example.com")
+
+        assert result.sitemaps == []
+
+    def test_map_result_still_behaves_as_a_plain_list(self) -> None:
+        client = CrwClient(api_url="https://fastcrw.com/api", api_key="crw_live_test")
+        mock_response = {"links": ["https://example.com/a"], "sitemaps": ["https://s.xml"]}
+
+        with patch.object(client, "_http_post", return_value=mock_response):
+            result = client.map("https://example.com")
+
+        assert isinstance(result, list)
+        assert result == ["https://example.com/a"]
+        assert len(result) == 1
+        assert json.dumps(result) == json.dumps(["https://example.com/a"])
+
+    def test_map_malformed_body_yields_empty_lists(self) -> None:
+        # A self-hosted server or gateway can answer anything; neither field may
+        # raise out of the SDK nor turn a string into a list of characters.
+        client = CrwClient(api_url="https://fastcrw.com/api", api_key="crw_live_test")
+
+        with patch.object(client, "_http_post", return_value={"links": "none", "sitemaps": 3}):
+            result = client.map("https://example.com")
+
+        assert result == []
+        assert result.sitemaps == []
+
+        with patch.object(client, "_http_post", return_value={"links": None}):
+            assert client.map("https://example.com") == []
+
+    def test_map_local_flat_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Embedded crw-mcp answers flat.
+        client = _local_client(monkeypatch)
+        mock_response = {
+            "success": True,
+            "links": ["https://example.com/a"],
+            "sitemaps": ["https://example.com/sitemap.xml"],
+        }
+
+        with patch.object(client, "_tool_call", return_value=mock_response):
+            result = client.map("https://example.com")
+
+        assert result == ["https://example.com/a"]
+        assert result.sitemaps == ["https://example.com/sitemap.xml"]
+
+    def test_map_local_proxy_envelope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A crw-mcp that inherited CRW_API_URL proxies and answers with the REST
+        # envelope. Before the unwrap this returned [] and dropped sitemaps.
+        client = _local_client(monkeypatch)
+        mock_response = {
+            "success": True,
+            "data": {
+                "links": ["https://example.com/a"],
+                "sitemaps": ["https://example.com/sitemap.xml"],
+            },
+            "creditCost": 1,
+        }
+
+        with patch.object(client, "_tool_call", return_value=mock_response):
+            result = client.map("https://example.com")
+
+        assert result == ["https://example.com/a"]
+        assert result.sitemaps == ["https://example.com/sitemap.xml"]
+
+    def test_map_local_ignores_an_unrelated_top_level_data(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The probe is `data.links`, not a bare `data`: a flat response that
+        # grows some other top-level `data` must not be unwrapped into.
+        client = _local_client(monkeypatch)
+        mock_response = {
+            "success": True,
+            "links": ["https://example.com/a"],
+            "sitemaps": ["https://example.com/sitemap.xml"],
+            "data": {"note": 1},
+        }
+
+        with patch.object(client, "_tool_call", return_value=mock_response):
+            result = client.map("https://example.com")
+
+        assert result == ["https://example.com/a"]
+        assert result.sitemaps == ["https://example.com/sitemap.xml"]
+
+    def test_map_local_null_data_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A third-party gateway may answer {"data": null}; unwrapping blindly
+        # would raise AttributeError here.
+        client = _local_client(monkeypatch)
+
+        with patch.object(client, "_tool_call", return_value={"success": True, "data": None}):
+            result = client.map("https://example.com")
+
+        assert result == []
+        assert result.sitemaps == []
 
 
 # ---------------------------------------------------------------------------

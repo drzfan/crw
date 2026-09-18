@@ -405,10 +405,10 @@ for (const r of results as Record&lt;string, unknown&gt;[]) {
 <p>Discover all URLs on a site without downloading page content.</p>
 <h3 id="python-3">Python</h3>
 <pre data-lang="python"><code class="language-python">urls = client.map(&quot;https://example.com&quot;, max_depth=2, use_sitemap=True)
-print(f&quot;Found {len(urls)} URLs&quot;)</code></pre>
+print(f&quot;Found {len(urls)} URLs across {len(urls.sitemaps)} sitemaps&quot;)</code></pre>
 <h3 id="typescript-3">TypeScript</h3>
 <pre data-lang="ts"><code class="language-ts">const urls = await client.map(&quot;https://example.com&quot;, { maxDepth: 2, useSitemap: true });
-console.log(`Found ${urls.length} URLs`);</code></pre>
+console.log(`Found ${urls.length} URLs across ${(urls.sitemaps ?? []).length} sitemaps`);</code></pre>
 <h3 id="curl-fallback-2">curl (fallback)</h3>
 <pre data-lang="bash"><code class="language-bash">curl -X POST https://api.fastcrw.com/v1/map \
   -H &quot;Authorization: Bearer $CRW_API_KEY&quot; \

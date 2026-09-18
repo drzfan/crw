@@ -20,6 +20,34 @@ interface Pending {
   reject: (e: Error) => void;
 }
 
+/**
+ * Variables that switch `crw-mcp` from embedded to proxy mode. Both are
+ * verified against the shipped binary: `CRW_API_URL` is bound by its CLI, and
+ * `CRW_CLIENT__API_URL` reaches the same setting through the config layer.
+ */
+const PROXY_MODE_ENV_VARS = ["CRW_API_URL", "CRW_CLIENT__API_URL"];
+
+/**
+ * Environment for the `crw-mcp` subprocess in CRW_LOCAL mode.
+ *
+ * The child inherits our environment, so either variable above left in the
+ * shell silently turned "run the local engine" into "call the cloud": every
+ * tool then answered with the REST envelope instead of the flat payload, and
+ * the call was billed. CRW_LOCAL means local, so the child does not get them.
+ *
+ * This cannot close every route: `crw-mcp` also reads `client.api_url` from
+ * `~/.config/crw/config.toml`, and it has no flag to force embedded mode. That
+ * is why `map()` still handles the envelope shape in `mapPayload`.
+ */
+export function localChildEnv(): NodeJS.ProcessEnv {
+  // Windows environment names are case-insensitive, so the child would read a
+  // differently-spelled key that an exact-match filter left behind. POSIX names
+  // are case-sensitive, so there only the exact spellings matter.
+  const fold = (k: string) => (process.platform === "win32" ? k.toUpperCase() : k);
+  const drop = new Set(PROXY_MODE_ENV_VARS.map(fold));
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.has(fold(k))));
+}
+
 export class LocalTransport {
   private proc: McpProc | null = null;
   private nextId = 0;
@@ -37,7 +65,7 @@ export class LocalTransport {
   private ensureProcess(): McpProc {
     if (this.proc && this.proc.exitCode === null) return this.proc;
     const bin = this.resolveBinary();
-    const proc = spawn(bin, [], { stdio: ["pipe", "pipe", "ignore"] });
+    const proc = spawn(bin, [], { stdio: ["pipe", "pipe", "ignore"], env: localChildEnv() });
     proc.on("error", (err: NodeJS.ErrnoException) => {
       const failure =
         err.code === "ENOENT"

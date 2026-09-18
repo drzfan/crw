@@ -83,6 +83,7 @@ print(job["id"])
 # Map all URLs on a site:
 urls = client.map("https://example.com")
 print(urls)
+print(urls.sitemaps)  # sitemap URLs the engine read, [] if the site has none
 ```
 
 ### Search

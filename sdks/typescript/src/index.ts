@@ -34,6 +34,7 @@ export type {
   BlockOutcome,
   LlmUsage,
   CrawlResult,
+  MapResult,
   SearchResult,
   SearchResultItem,
   ImageResultItem,
