@@ -13,8 +13,8 @@ MCP (Model Context Protocol) server for the [CRW](https://github.com/us/crw) web
 
 | Mode | When | Setup |
 |------|------|-------|
-| **Embedded** (default) | No `--api-url` set | Self-contained, zero setup |
-| **Proxy** | `--api-url` provided | Forwards to remote CRW server |
+| **Embedded** (default) | `CRW_LOCAL` truthy, or no API URL resolved | Self-contained, zero setup |
+| **Proxy** | `CRW_LOCAL` unset or falsy, and an API URL resolved | Forwards to remote CRW server |
 
 **9 MCP tools:**
 
@@ -87,7 +87,8 @@ claude mcp add --transport http crw http://localhost:3000/mcp
 
 | Flag | Env Var | Description |
 |------|---------|-------------|
-| `--api-url` | `CRW_API_URL` | Remote server URL (enables proxy mode) |
+| `--api-url` | `CRW_API_URL` | Remote server URL (enables proxy mode, unless `CRW_LOCAL` is truthy) |
+| n/a | `CRW_LOCAL` | Truthy pins embedded mode and ignores any configured API URL |
 | `--api-key` | `CRW_API_KEY` | Bearer token for remote server auth |
 | `--config` | `CRW_CONFIG` | Config file path (embedded mode only) |
 | — | `RUST_LOG` | Log level (default: `crw_mcp=info`, logs go to stderr) |

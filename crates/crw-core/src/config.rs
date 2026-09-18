@@ -30,6 +30,45 @@ pub struct AppConfig {
     pub mcp: McpConfig,
 }
 
+/// The SDKs' truthiness rule for a flag-like env var, kept identical on
+/// purpose: present, and not `0` / `false` / `no` / empty once trimmed and
+/// lowercased. See `envTruthy` in `sdks/typescript/src/client.ts` and
+/// `_env_truthy` in `sdks/python/src/crw/client.py`. Note `off` and `2` are
+/// TRUE under it, as they are there; a helper that disagreed would let
+/// `CRW_LOCAL` mean one thing to the SDK and another to the engine.
+///
+/// `trim` here is Rust's Unicode-whitespace trim. No two of the three runtimes
+/// agree on the exact set: Python's `.strip()` also strips U+001C to U+001F,
+/// and JavaScript's `.trim()` strips U+FEFF but not U+0085. Only a value padded
+/// with one of those can land differently, and the SDKs already disagree with
+/// each other there, so matching either exactly is not available.
+///
+/// Takes the value rather than the variable name, so callers stay testable
+/// without touching process env. Use [`env_var_truthy`] to read one from the
+/// environment.
+/// [`env_truthy`] for a named environment variable.
+///
+/// Reads through `var_os` and lossily decodes, rather than `var().ok()`, which
+/// reports non-UTF-8 as absent. The Python SDK reads those same bytes as
+/// truthy, so the `ok()` form would have the SDK go local while the engine it
+/// spawned went to the cloud: the exact failure this is here to prevent.
+pub fn env_var_truthy(name: &str) -> bool {
+    env_truthy(
+        std::env::var_os(name)
+            .map(|v| v.to_string_lossy().into_owned())
+            .as_deref(),
+    )
+}
+
+pub fn env_truthy(value: Option<&str>) -> bool {
+    value.is_some_and(|v| {
+        !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no"
+        )
+    })
+}
+
 /// `[mcp]` section — controls how the MCP surfaces shape tool responses.
 /// Honors the `CRW_MCP__*` env overrides (e.g. `CRW_MCP__HIDE_CREDITS=true`).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -2151,6 +2190,18 @@ mod tests {
 
     /// Env var tests modify process-wide state; serialize them to avoid cross-test
     /// interference (e.g. `force_js` alias + `render_js_default` direct both set).
+    #[test]
+    fn env_truthy_matches_the_sdk_rule() {
+        // Pure: no process env, so this cannot race a sibling.
+        for truthy in ["1", "true", "yes", "TRUE", " 1 ", "off", "2", "anything"] {
+            assert!(env_truthy(Some(truthy)), "{truthy:?} should be truthy");
+        }
+        for falsy in ["0", "false", "no", "", "  ", "FALSE", " No "] {
+            assert!(!env_truthy(Some(falsy)), "{falsy:?} should be falsy");
+        }
+        assert!(!env_truthy(None));
+    }
+
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn clear_renderer_env() {

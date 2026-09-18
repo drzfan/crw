@@ -117,7 +117,7 @@ cargo build --profile release-small --no-default-features -p crw-mcp
 
 Binaries are placed in `target/release/` (or `target/release-small/` for the lean build).
 
-The lean build (`--no-default-features`) omits the `embedded` cargo feature that gates the headless browser engine. Use it when you want a minimal proxy-only binary that forwards requests to a remote CRW server or fastcrw.com.
+The lean build (`--no-default-features`) omits the `embedded` cargo feature that gates the headless browser engine. Use it when you want a minimal proxy-only binary that forwards requests to a remote CRW server or fastcrw.com. It cannot serve a local run, so it exits with an error rather than falling back to the network if `CRW_LOCAL` is truthy in its environment.
 
 ## Docker
 

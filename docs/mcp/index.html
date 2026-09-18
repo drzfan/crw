@@ -300,17 +300,24 @@ crw search "renewable energy trends 2024" --json --fields title,url,snippet --li
 </thead>
 <tbody><tr>
 <td><strong>Embedded</strong> (default)</td>
-<td>No <code>--api-url</code> / <code>CRW_API_URL</code> set</td>
+<td><code>CRW_LOCAL</code> truthy, or no API URL resolved</td>
 <td>scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file + <strong>search</strong> (when a search backend is configured)</td>
 <td>Self-contained. No server needed. The scraping engine runs inside the MCP process. <code>crw_search</code> is advertised only when a search backend is configured (e.g. the Docker compose sidecar).</td>
 </tr>
 <tr>
 <td><strong>Proxy / Server</strong></td>
-<td><code>--api-url</code> / <code>CRW_API_URL</code> set</td>
+<td><code>CRW_LOCAL</code> unset or falsy, and an API URL resolved</td>
 <td>scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file, search</td>
-<td>Forwards tool calls to a remote CRW server — the <a href="https://fastcrw.com">fastcrw.com</a> cloud <strong>or your own self-hosted server</strong>. <code>crw_search</code> is always advertised in proxy mode; it works whenever the server has a search backend configured (the Docker stack enables it by default).</td>
+<td>Forwards tool calls to a remote CRW server: the <a href="https://fastcrw.com">fastcrw.com</a> cloud <strong>or your own self-hosted server</strong>. <code>crw_search</code> is always advertised in proxy mode; it works whenever the server has a search backend configured (the Docker stack enables it by default).</td>
 </tr>
 </tbody></table>
+<p>An API URL resolves from <code>--api-url</code>, <code>CRW_API_URL</code>, <code>CRW_CLIENT__API_URL</code>, or
+<code>client.api_url</code> in <code>~/.config/crw/config.toml</code>, which is where <code>crw setup</code>
+writes it. A truthy <code>CRW_LOCAL</code> overrides all four and pins embedded mode, so a
+run you asked to keep local is never billed or sent to a remote server. Truthy
+means anything except <code>0</code>, <code>false</code>, <code>no</code> or empty, matching the SDKs. This
+applies to the MCP entry point; other subcommands such as <code>crw search</code> still
+read <code>client.api_url</code> on their own.</p>
 <h2 id="where-to-use-what">Where to use what</h2>
 <ul>
 <li>Use this page for the MCP model, tool list, and transport choices.</li>
@@ -414,7 +421,12 @@ claude mcp add crw \
 <tbody><tr>
 <td><code>--api-url</code></td>
 <td><code>CRW_API_URL</code></td>
-<td>Remote server URL (enables proxy mode)</td>
+<td>Remote server URL (enables proxy mode, unless <code>CRW_LOCAL</code> is truthy)</td>
+</tr>
+<tr>
+<td>n/a</td>
+<td><code>CRW_LOCAL</code></td>
+<td>Truthy pins embedded mode and ignores any configured API URL</td>
 </tr>
 <tr>
 <td><code>--api-key</code></td>

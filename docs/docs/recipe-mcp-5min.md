@@ -163,7 +163,7 @@ Claude now has 5 live search results with titles, URLs, and descriptions. It pic
 }
 ```
 
-> **Response shape note:** In cloud/proxy mode (`CRW_API_URL=https://api.fastcrw.com`), `crw-mcp` forwards the call to the REST API and returns the full envelope — `{"success":true,"data":{...}}` — verbatim as `content[0].text`. In local embedded mode (`npx crw-mcp` with no `CRW_API_URL`), the MCP server returns the bare `ScrapeData` shape — `{"markdown":"...","metadata":{...}}` — directly, without the `success`/`data` wrapper.
+> **Response shape note:** In cloud/proxy mode (`CRW_API_URL=https://api.fastcrw.com`), `crw-mcp` forwards the call to the REST API and returns the full envelope `{"success":true,"data":{...}}` verbatim as `content[0].text`. In local embedded mode (`npx crw-mcp` with no API URL resolved, or with `CRW_LOCAL` truthy), the MCP server returns the bare `ScrapeData` shape `{"markdown":"...","metadata":{...}}` directly, without the `success`/`data` wrapper.
 
 ---
 

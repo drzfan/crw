@@ -81,8 +81,12 @@ pub async fn run(args: DoctorArgs) -> Result<(), CmdError> {
         Target::Local => checks.extend(run_local_checks(&config).await),
         Target::Cloud => checks.extend(run_cloud_checks(&config).await),
         Target::Mcp => {
-            checks.push(mcp_mode_check(&config));
-            if config.client.api_url.is_some() {
+            // One decision for both the label and the checks: reporting
+            // embedded while probing the cloud would describe a server that is
+            // not the one `crw mcp` would start.
+            let local_forced = crw_core::config::env_var_truthy("CRW_LOCAL");
+            checks.push(mcp_mode_check(&config, local_forced));
+            if !local_forced && config.client.api_url.is_some() {
                 checks.extend(run_cloud_checks(&config).await);
             } else {
                 checks.extend(run_local_checks(&config).await);
@@ -595,7 +599,14 @@ async fn cloud_reachability_check(api_url: &str, api_key: Option<&str>) -> Check
     }
 }
 
-fn mcp_mode_check(config: &AppConfig) -> CheckResult {
+/// `local_forced` is the caller's `CRW_LOCAL` reading, taken as an argument
+/// rather than read here: a truthy value pins the MCP server to embedded
+/// whatever the config says, and passing it in keeps this pure, so the test
+/// below cannot be flipped by the developer's own environment.
+fn mcp_mode_check(config: &AppConfig, local_forced: bool) -> CheckResult {
+    if local_forced {
+        return CheckResult::pass("mcp.mode", "embedded mode (local engine, CRW_LOCAL set)");
+    }
     match &config.client.api_url {
         Some(url) => CheckResult::pass(
             "mcp.mode",
@@ -716,10 +727,23 @@ mod tests {
     }
 
     #[test]
+    fn mcp_mode_check_reports_local_when_crw_local_is_set() {
+        let mut config = AppConfig::default();
+        config.client.api_url = Some("https://api.fastcrw.com".to_string());
+        let result = mcp_mode_check(&config, true);
+        assert_eq!(result.status, Status::Pass);
+        assert!(result.message.contains("embedded mode"));
+        assert!(
+            !result.message.contains("fastcrw.com"),
+            "must not report a URL the MCP server will not use"
+        );
+    }
+
+    #[test]
     fn mcp_mode_check_reports_proxy_mode_with_redacted_url() {
         let mut config = AppConfig::default();
         config.client.api_url = Some("https://user:pass@api.fastcrw.com".to_string());
-        let result = mcp_mode_check(&config);
+        let result = mcp_mode_check(&config, false);
         assert_eq!(result.status, Status::Pass);
         assert!(result.message.contains("proxy mode via"));
         assert!(
@@ -731,7 +755,7 @@ mod tests {
     #[test]
     fn mcp_mode_check_reports_embedded_mode_when_no_api_url() {
         let config = AppConfig::default();
-        let result = mcp_mode_check(&config);
+        let result = mcp_mode_check(&config, false);
         assert_eq!(result.status, Status::Pass);
         assert!(result.message.contains("embedded mode"));
     }

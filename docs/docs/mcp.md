@@ -10,8 +10,16 @@ CRW includes a built-in MCP (Model Context Protocol) server that gives any MCP-c
 
 | Mode | When | Tools | Description |
 |------|------|-------|-------------|
-| **Embedded** (default) | No `--api-url` / `CRW_API_URL` set | scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file + **search** (when a search backend is configured) | Self-contained. No server needed. The scraping engine runs inside the MCP process. `crw_search` is advertised only when a search backend is configured (e.g. the Docker compose sidecar). |
-| **Proxy / Server** | `--api-url` / `CRW_API_URL` set | scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file, search | Forwards tool calls to a remote CRW server — the [fastcrw.com](https://fastcrw.com) cloud **or your own self-hosted server**. `crw_search` is always advertised in proxy mode; it works whenever the server has a search backend configured (the Docker stack enables it by default). |
+| **Embedded** (default) | `CRW_LOCAL` truthy, or no API URL resolved | scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file + **search** (when a search backend is configured) | Self-contained. No server needed. The scraping engine runs inside the MCP process. `crw_search` is advertised only when a search backend is configured (e.g. the Docker compose sidecar). |
+| **Proxy / Server** | `CRW_LOCAL` unset or falsy, and an API URL resolved | scrape, crawl, check_crawl_status, map, extract, check_extract_status, cancel_extract, parse_file, search | Forwards tool calls to a remote CRW server: the [fastcrw.com](https://fastcrw.com) cloud **or your own self-hosted server**. `crw_search` is always advertised in proxy mode; it works whenever the server has a search backend configured (the Docker stack enables it by default). |
+
+An API URL resolves from `--api-url`, `CRW_API_URL`, `CRW_CLIENT__API_URL`, or
+`client.api_url` in `~/.config/crw/config.toml`, which is where `crw setup`
+writes it. A truthy `CRW_LOCAL` overrides all four and pins embedded mode, so a
+run you asked to keep local is never billed or sent to a remote server. Truthy
+means anything except `0`, `false`, `no` or empty, matching the SDKs. This
+applies to the MCP entry point; other subcommands such as `crw search` still
+read `client.api_url` on their own.
 
 ## Where to use what
 
@@ -130,7 +138,8 @@ claude mcp add --transport http crw http://localhost:3000/mcp
 
 | Flag | Env Var | Description |
 |------|---------|-------------|
-| `--api-url` | `CRW_API_URL` | Remote server URL (enables proxy mode) |
+| `--api-url` | `CRW_API_URL` | Remote server URL (enables proxy mode, unless `CRW_LOCAL` is truthy) |
+| n/a | `CRW_LOCAL` | Truthy pins embedded mode and ignores any configured API URL |
 | `--api-key` | `CRW_API_KEY` | Bearer token for remote server auth |
 | `--config` | `CRW_CONFIG` | Config file path (embedded mode only) |
 | `--hide-credits` | `CRW_MCP__HIDE_CREDITS` | Strip `creditCost`/`creditsUsed` from tool responses |

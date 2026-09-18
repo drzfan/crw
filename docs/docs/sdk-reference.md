@@ -440,7 +440,7 @@ try {
 |---|---|
 | `CRW_API_KEY` | API key for cloud or authenticated self-hosted server |
 | `CRW_API_URL` | Override the default cloud URL with a self-hosted server URL |
-| `CRW_LOCAL` | `1` (or any truthy string except `0`/`false`/`no`) → subprocess mode (no server, no key required) |
+| `CRW_LOCAL` | `1` (or any truthy string except `0`/`false`/`no`) → subprocess mode (no server, no key required). The spawned `crw-mcp` honours it too, so a configured `client.api_url` cannot quietly turn a local run into a remote one. See [MCP](/docs/mcp). |
 | `CRW_BINARY` | Explicit path to the `crw-mcp` binary (skips auto-discovery) |
 
 ---

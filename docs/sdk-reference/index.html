@@ -791,7 +791,7 @@ try {
 </tr>
 <tr>
 <td><code>CRW_LOCAL</code></td>
-<td><code>1</code> (or any truthy string except <code>0</code>/<code>false</code>/<code>no</code>) → subprocess mode (no server, no key required)</td>
+<td><code>1</code> (or any truthy string except <code>0</code>/<code>false</code>/<code>no</code>) → subprocess mode (no server, no key required). The spawned <code>crw-mcp</code> honours it too, so a configured <code>client.api_url</code> cannot quietly turn a local run into a remote one. See <a href="/docs/mcp">MCP</a>.</td>
 </tr>
 <tr>
 <td><code>CRW_BINARY</code></td>

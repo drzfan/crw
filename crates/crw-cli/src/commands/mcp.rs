@@ -530,10 +530,18 @@ pub async fn run(args: McpArgs) -> Result<(), CmdError> {
 
         #[cfg(not(feature = "mcp-embedded"))]
         {
-            tracing::error!(
-                "Embedded mode not available (compiled without 'mcp-embedded' feature). \
-                 Use --api-url to connect to a remote CRW server."
-            );
+            if crw_core::config::env_var_truthy("CRW_LOCAL") {
+                tracing::error!(
+                    "CRW_LOCAL asks for a local engine, but this build has no \
+                     'mcp-embedded' feature and cannot run one. Unset CRW_LOCAL to proxy \
+                     to a remote CRW server, or install a full build."
+                );
+            } else {
+                tracing::error!(
+                    "Embedded mode not available (compiled without 'mcp-embedded' feature). \
+                     Use --api-url to connect to a remote CRW server."
+                );
+            }
             return Err(CmdError::code_only(1));
         }
     };
@@ -602,6 +610,17 @@ fn resolve_client_credentials(
 ) -> (Option<String>, Option<String>, bool) {
     let cfg = crw_core::config::AppConfig::load().ok();
     let hide_credits = cfg.as_ref().is_some_and(|c| c.mcp.hide_credits);
+    // Same guard as the standalone `crw-mcp`, for the same reason: a
+    // `client.api_url` left behind by `crw setup` would otherwise turn a run
+    // the user asked to keep local into a billed cloud call. Behaviour and
+    // rationale are covered by the tests on that copy; this file has no test
+    // module, and adding one would need an env lock it does not have.
+    if crw_core::config::env_var_truthy("CRW_LOCAL") {
+        if cli_url.is_some() || cfg.as_ref().is_some_and(|c| c.client.api_url.is_some()) {
+            tracing::warn!("CRW_LOCAL is set: running embedded, ignoring the configured API URL");
+        }
+        return (None, cli_key, hide_credits);
+    }
     if cli_url.is_some() {
         return (cli_url, cli_key, hide_credits);
     }

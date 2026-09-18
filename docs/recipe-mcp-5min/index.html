@@ -390,7 +390,7 @@ Find current sources, not training data.</code></pre>
   }
 }</p>
 <pre><code>
-&gt; **Response shape note:** In cloud/proxy mode (`CRW_API_URL=https://api.fastcrw.com`), `crw-mcp` forwards the call to the REST API and returns the full envelope — `{&quot;success&quot;:true,&quot;data&quot;:{...}}` — verbatim as `content[0].text`. In local embedded mode (`npx crw-mcp` with no `CRW_API_URL`), the MCP server returns the bare `ScrapeData` shape — `{&quot;markdown&quot;:&quot;...&quot;,&quot;metadata&quot;:{...}}` — directly, without the `success`/`data` wrapper.
+&gt; **Response shape note:** In cloud/proxy mode (`CRW_API_URL=https://api.fastcrw.com`), `crw-mcp` forwards the call to the REST API and returns the full envelope `{&quot;success&quot;:true,&quot;data&quot;:{...}}` verbatim as `content[0].text`. In local embedded mode (`npx crw-mcp` with no API URL resolved, or with `CRW_LOCAL` truthy), the MCP server returns the bare `ScrapeData` shape `{&quot;markdown&quot;:&quot;...&quot;,&quot;metadata&quot;:{...}}` directly, without the `success`/`data` wrapper.
 
 ---
 

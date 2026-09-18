@@ -5,8 +5,11 @@
 //! - **Embedded (default)** — Self-contained scraping engine. No external server needed.
 //! - **Proxy** — Forwards tool calls to a remote CRW server over HTTP.
 //!
-//! Mode selection: if `--api-url` or `CRW_API_URL` is set, proxy mode is used.
-//! Otherwise, embedded mode is used (requires the `embedded` feature, on by default).
+//! Mode selection: a truthy `CRW_LOCAL` forces embedded mode, whatever else is
+//! configured. Otherwise proxy mode is used when an API URL resolves from
+//! `--api-url`, `CRW_API_URL`, `CRW_CLIENT__API_URL` or `client.api_url` in the
+//! config file; failing that, embedded mode (requires the `embedded` feature,
+//! on by default).
 //!
 //! # Tools
 //!
@@ -53,6 +56,7 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 struct Cli {
     /// Remote CRW server URL. Enables proxy mode.
     /// Without this flag, runs in embedded mode (self-contained).
+    /// A truthy `CRW_LOCAL` overrides this and forces embedded mode.
     #[arg(long, env = "CRW_API_URL")]
     api_url: Option<String>,
 
@@ -599,10 +603,18 @@ async fn run() -> Result<(), CmdError> {
 
         #[cfg(not(feature = "embedded"))]
         {
-            tracing::error!(
-                "Embedded mode not available (compiled without 'embedded' feature). \
-                 Use --api-url to connect to a remote CRW server."
-            );
+            if crw_core::config::env_var_truthy("CRW_LOCAL") {
+                tracing::error!(
+                    "CRW_LOCAL asks for a local engine, but this binary was compiled \
+                     without the 'embedded' feature and cannot run one. Unset CRW_LOCAL \
+                     to proxy to a remote CRW server, or install a full build."
+                );
+            } else {
+                tracing::error!(
+                    "Embedded mode not available (compiled without 'embedded' feature). \
+                     Use --api-url to connect to a remote CRW server."
+                );
+            }
             return Err(CmdError::code_only(1));
         }
     };
@@ -658,10 +670,13 @@ async fn run_stdio_loop(backend: Backend) {
     }
 }
 
-/// Resolve proxy-mode credentials. CLI / env values (already merged by clap)
+/// Resolve proxy-mode credentials. A truthy `CRW_LOCAL` short-circuits to no
+/// URL, so embedded mode is chosen whatever else is configured. Otherwise CLI /
+/// env values (already merged by clap)
 /// win; otherwise consult `client.{api_url,api_key}` from
-/// `~/.config/crw/config.toml`. Mirrors the same chain `crw mcp` uses so the
-/// standalone `crw-mcp` binary behaves identically.
+/// `~/.config/crw/config.toml`. Mirrors the chain `crw mcp` uses, `CRW_LOCAL`
+/// guard included, so the standalone binary and the subcommand pick the same
+/// mode for the same environment.
 /// Returns `(api_url, api_key, hide_credits)`. The config file is read even
 /// when `--api-url` was passed: `[mcp] hide_credits` is independent of where
 /// the backend lives, and proxy mode builds no `AppConfig` of its own, so this
@@ -672,6 +687,28 @@ fn resolve_client_credentials(
 ) -> (Option<String>, Option<String>, bool) {
     let cfg = crw_core::config::AppConfig::load().ok();
     let hide_credits = cfg.as_ref().is_some_and(|c| c.mcp.hide_credits);
+    // `CRW_LOCAL` is the SDKs' "run the engine here, no cloud" opt-in, and they
+    // spawn this binary to carry it out. Only the SDK used to read it, so a
+    // `client.api_url` left behind by `crw setup` still selected proxy mode:
+    // the run was billed, the URLs left the machine, and every tool answered
+    // with the REST envelope instead of the flat payload the caller expected.
+    //
+    // It wins over every source, including the flag. `--api-url` and
+    // `CRW_API_URL` arrive as the same clap `Option`, so "beat the env but not
+    // the flag" is not expressible here, and of the two readings of a
+    // contradictory request, the local one cannot spend the user's money.
+    //
+    // An explicitly passed key is handed back (harmless: only the proxy arm
+    // reads one), but the config file's is not fetched. A local run carries no
+    // cloud credential it never needed.
+    if crw_core::config::env_var_truthy("CRW_LOCAL") {
+        // Deliberately not logging the URL itself: a `client.api_url` may
+        // carry userinfo, and this line lands in the MCP host's log file.
+        if cli_url.is_some() || cfg.as_ref().is_some_and(|c| c.client.api_url.is_some()) {
+            tracing::warn!("CRW_LOCAL is set: running embedded, ignoring the configured API URL");
+        }
+        return (None, cli_key, hide_credits);
+    }
     if cli_url.is_some() {
         return (cli_url, cli_key, hide_credits);
     }
@@ -965,6 +1002,7 @@ mod tests {
             std::env::remove_var("CRW_CLIENT__API_KEY");
             std::env::remove_var("CRW_MCP__HIDE_CREDITS");
             std::env::remove_var("CRW_CONFIG");
+            std::env::remove_var("CRW_LOCAL");
         }
     }
 
@@ -1011,6 +1049,116 @@ mod tests {
         assert_eq!(url, None);
         assert_eq!(key, None);
         assert!(!hide);
+    }
+
+    // --- CRW_LOCAL forces embedded mode ---
+    //
+    // `CRW_LOCAL` is the SDKs' local opt-in and they spawn this binary to carry
+    // it out. Every source of an api_url has to lose to it, or the "local" run
+    // goes to the cloud and gets billed.
+
+    #[test]
+    fn resolve_credentials_crw_local_beats_env_client_api_url() {
+        // `CRW_CLIENT__API_URL` reaches the resolver by a different route than
+        // the flag: figment folds it into `cfg.client.api_url`.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_crw_env();
+        let _dir = ScratchConfigDir::new("local-beats-env");
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe {
+            std::env::set_var("CRW_CLIENT__API_URL", "https://env.example");
+            std::env::set_var("CRW_LOCAL", "1");
+        }
+
+        let (url, _key, _hide) = resolve_client_credentials(None, None);
+        assert_eq!(url, None);
+        clear_crw_env();
+    }
+
+    #[test]
+    fn resolve_credentials_crw_local_beats_config_file_client_api_url() {
+        // The route no SDK-side fix can reach: `crw setup` writes this file, so
+        // the user never typed a URL anywhere in the CRW_LOCAL run.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_crw_env();
+        let dir = ScratchConfigDir::new("local-beats-config");
+        dir.write_config(
+            "[client]\napi_url = \"https://from-config.example\"\napi_key = \"cfg-key\"\n",
+        );
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe {
+            std::env::set_var("CRW_LOCAL", "1");
+        }
+
+        let (url, key, _hide) = resolve_client_credentials(None, None);
+        assert_eq!(url, None);
+        // The config file's cloud key is deliberately left behind: only the
+        // proxy arm reads a key, and a run the user asked to keep local has no
+        // business carrying a cloud credential.
+        assert_eq!(key, None);
+        clear_crw_env();
+    }
+
+    #[test]
+    fn resolve_credentials_crw_local_beats_an_explicit_cli_url() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_crw_env();
+        let _dir = ScratchConfigDir::new("local-beats-cli");
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe {
+            std::env::set_var("CRW_LOCAL", "1");
+        }
+
+        let (url, key, _hide) = resolve_client_credentials(
+            Some("https://cli.example".to_string()),
+            Some("cli-key".to_string()),
+        );
+        assert_eq!(url, None);
+        assert_eq!(key, Some("cli-key".to_string()));
+        clear_crw_env();
+    }
+
+    #[test]
+    fn resolve_credentials_crw_local_still_reports_hide_credits() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_crw_env();
+        let dir = ScratchConfigDir::new("local-hide-credits");
+        // The url matters: without it this test passes even with the guard
+        // deleted, and would prove nothing about the local path.
+        dir.write_config(
+            "[client]\napi_url = \"https://from-config.example\"\n\n[mcp]\nhide_credits = true\n",
+        );
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe {
+            std::env::set_var("CRW_LOCAL", "1");
+        }
+
+        let (url, _key, hide) = resolve_client_credentials(None, None);
+        assert_eq!(url, None);
+        assert!(hide);
+        clear_crw_env();
+    }
+
+    #[test]
+    fn resolve_credentials_falsy_crw_local_leaves_proxy_mode_alone() {
+        for falsy in ["0", ""] {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            clear_crw_env();
+            let dir = ScratchConfigDir::new("local-falsy");
+            dir.write_config("[client]\napi_url = \"https://from-config.example\"\n");
+            // SAFETY: serialized by ENV_LOCK.
+            unsafe {
+                std::env::set_var("CRW_LOCAL", falsy);
+            }
+
+            let (url, _key, _hide) = resolve_client_credentials(None, None);
+            assert_eq!(
+                url,
+                Some("https://from-config.example".to_string()),
+                "CRW_LOCAL={falsy:?} must not opt into local"
+            );
+            clear_crw_env();
+        }
     }
 
     #[test]

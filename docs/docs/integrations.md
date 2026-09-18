@@ -235,7 +235,7 @@ Not every integration supports every endpoint. Search requires a cloud API backe
 | Direct HTTP | Yes | Yes | Yes | Yes (cloud) | Yes |
 
 :::note
-In MCP **proxy mode** (`--api-url` / `CRW_API_URL` set), `crw_search` is always advertised and the remote server handles it. In **embedded mode**, `crw_search` is only available when a search sidecar is configured.
+In MCP **proxy mode** (an API URL resolves and `CRW_LOCAL` is not truthy), `crw_search` is always advertised and the remote server handles it. In **embedded mode**, `crw_search` is only available when a search sidecar is configured.
 :::
 
 ## All Integrations

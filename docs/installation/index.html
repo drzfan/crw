@@ -345,7 +345,7 @@ cargo build --release --bin crw-mcp
 # MCP stdio binary — lean browser-free proxy (~4.2 MB, no embedded browser)
 cargo build --profile release-small --no-default-features -p crw-mcp</code></pre>
 <p>Binaries are placed in <code>target/release/</code> (or <code>target/release-small/</code> for the lean build).</p>
-<p>The lean build (<code>--no-default-features</code>) omits the <code>embedded</code> cargo feature that gates the headless browser engine. Use it when you want a minimal proxy-only binary that forwards requests to a remote CRW server or fastcrw.com.</p>
+<p>The lean build (<code>--no-default-features</code>) omits the <code>embedded</code> cargo feature that gates the headless browser engine. Use it when you want a minimal proxy-only binary that forwards requests to a remote CRW server or fastcrw.com. It cannot serve a local run, so it exits with an error rather than falling back to the network if <code>CRW_LOCAL</code> is truthy in its environment.</p>
 <h2 id="docker">Docker</h2>
 <pre data-lang="bash"><code class="language-bash"># Pre-built image
 docker run -p 3000:3000 ghcr.io/us/crw:latest
