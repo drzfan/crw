@@ -12,9 +12,29 @@ v="${1:?version required}"
 image="${2:-ghcr.io/us/crw}"
 major_minor=$(printf '%s' "$v" | cut -d. -f1-2)
 
+# Poll, for the same reason the npm checks do: a registry accepts the push
+# before every tag is readable. The 0.36.0 audit read `latest` as missing while
+# `$v` and `$major_minor`, pushed in the same operation, both passed, and
+# `latest` resolved to the right digest minutes later. A single shot reports a
+# healthy release as broken.
+#
+# The deadline is shared across tags rather than per tag, so a genuinely failed
+# release is still reported in five minutes and not in fifteen.
+deadline=$(( $(date +%s) + 300 ))
+manifest_for() {
+  local ref="$1" out=""
+  while :; do
+    out=$(docker manifest inspect "$ref" 2>/dev/null || echo "")
+    [ -n "$out" ] && break
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 10
+  done
+  printf '%s' "$out"
+}
+
 fail=0
 for tag in "$v" "latest" "$major_minor"; do
-  manifest=$(docker manifest inspect "${image}:${tag}" 2>/dev/null || echo "")
+  manifest=$(manifest_for "${image}:${tag}")
   if [ -z "$manifest" ]; then
     printf '❌ %s:%s missing\n' "$image" "$tag"
     fail=1
