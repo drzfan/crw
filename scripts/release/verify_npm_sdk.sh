@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib.sh"
 v="${1:?version required}"
 pkg="crw-sdk" # single source: keep in sync with sdks/typescript/package.json "name"
 
-# 1. Existence — poll, since npm registry propagation can lag after publish
+# 1. Existence: poll, since npm registry propagation can lag after publish
 # (otherwise this false-fails a successful release). The window matches
 # verify_npm.sh, which was widened to five minutes after 0.34.0 measured more
 # than a minute. This script kept the old 60 s and so false-failed both 0.35.1
