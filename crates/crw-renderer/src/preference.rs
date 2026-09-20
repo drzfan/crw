@@ -109,12 +109,69 @@ impl RendererStats {
         }
     }
 
+    /// Read-only view for the admin surface. Counts only failures still
+    /// inside the sliding window: expiry is lazy (it happens on the next
+    /// `record_failure`), so a host that went quiet would otherwise report a
+    /// window full of failures that no longer influence anything.
+    pub fn snapshot(&self) -> (bool, usize, usize, Option<u64>) {
+        let now = Instant::now();
+        let inner = self.inner.lock().expect("RendererStats mutex poisoned");
+        let live = inner
+            .failures
+            .iter()
+            .filter(|e| now.duration_since(e.at) <= WINDOW_DURATION);
+        let mut total = 0usize;
+        let mut counting = 0usize;
+        let mut newest: Option<u64> = None;
+        for e in live {
+            total += 1;
+            if e.counts {
+                counting += 1;
+            }
+            let age = now.duration_since(e.at).as_secs();
+            newest = Some(newest.map_or(age, |n: u64| n.min(age)));
+        }
+        (inner.promoted, total, counting, newest)
+    }
+
     /// True if this host is currently promoted to a heavier renderer.
     pub fn is_promoted(&self) -> bool {
         self.inner
             .lock()
             .expect("RendererStats mutex poisoned")
             .promoted
+    }
+}
+
+/// One tracked host, as the admin surface sees it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HostPreferenceRow {
+    /// Normalized (registry-domain) host, which is what the cache keys on.
+    pub host: String,
+    /// Promoted to Chrome-first. Latched until a success or a reset.
+    pub promoted: bool,
+    /// Failures still inside the window, including ones that do not promote.
+    pub failures: usize,
+    /// The subset that counts toward promotion (`counts_for_promotion`).
+    pub counting_failures: usize,
+    /// Age of the most recent failure; `None` when the window is empty.
+    pub newest_failure_age_s: Option<u64>,
+}
+
+/// The tuning behind the numbers above, so a reader does not have to guess
+/// why 3 failures promoted a host or when the window empties on its own.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HostPreferenceConfig {
+    pub promotion_threshold: usize,
+    pub window_seconds: u64,
+    pub window_cap: usize,
+}
+
+pub fn config() -> HostPreferenceConfig {
+    HostPreferenceConfig {
+        promotion_threshold: PROMOTION_THRESHOLD,
+        window_seconds: WINDOW_DURATION.as_secs(),
+        window_cap: WINDOW_CAP,
     }
 }
 
@@ -186,9 +243,46 @@ impl HostPreferences {
     }
 
     /// Clear preference state for a specific host (will be normalized).
+    ///
+    /// Drains pending tasks for the same reason `reset_all` does: `invalidate`
+    /// only schedules the removal, so without this the entry is still returned
+    /// by `snapshot`/`size` immediately afterwards and an admin who just
+    /// deleted a host sees it sitting there unchanged.
     pub async fn reset_host(&self, host: &str) {
         let normalized = normalize_host(host);
         self.cache.invalidate(&normalized).await;
+        self.cache.run_pending_tasks().await;
+    }
+
+    /// Every tracked host, for the admin surface. Ordered promoted-first then
+    /// by failure count, so the hosts that changed routing sort to the top.
+    ///
+    /// `moka` iteration is a weakly-consistent view: it may include an entry
+    /// evicted mid-walk and cannot be treated as a transaction. That is fine
+    /// for a diagnostic read, and is why nothing here takes a decision.
+    pub fn snapshot(&self) -> Vec<HostPreferenceRow> {
+        let mut rows: Vec<HostPreferenceRow> = self
+            .cache
+            .iter()
+            .map(|(host, stats)| {
+                let (promoted, failures, counting_failures, newest_failure_age_s) =
+                    stats.snapshot();
+                HostPreferenceRow {
+                    host: host.to_string(),
+                    promoted,
+                    failures,
+                    counting_failures,
+                    newest_failure_age_s,
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            b.promoted
+                .cmp(&a.promoted)
+                .then(b.counting_failures.cmp(&a.counting_failures))
+                .then(a.host.cmp(&b.host))
+        });
+        rows
     }
 
     /// Current cache size (approximate).

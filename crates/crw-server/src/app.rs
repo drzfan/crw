@@ -77,6 +77,14 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/admin/breakers/reset",
             post(routes::breakers::reset_breakers).fallback(method_not_allowed),
+        )
+        .route(
+            "/metrics/renderer-preferences",
+            get(routes::preferences::renderer_preferences).fallback(method_not_allowed),
+        )
+        .route(
+            "/admin/preferences/reset",
+            post(routes::preferences::reset_preferences).fallback(method_not_allowed),
         );
 
     let api_routes = if api_keys.is_empty() {
