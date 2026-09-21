@@ -2,6 +2,29 @@
 
 All notable changes to CRW are documented here.
 
+## [0.37.0](https://github.com/fastcrw/crw/compare/v0.36.0...v0.37.0) (2026-09-21)
+
+
+### Features
+
+* **renderer:** reach the solver tier on hosts that block datacenter addresses ([63762e7](https://github.com/fastcrw/crw/commit/63762e724b115915316bda2fa4944a3ce185a443))
+* **server:** expose and clear the per-host renderer preference learner ([8d50185](https://github.com/fastcrw/crw/commit/8d50185397c0aafd972ef1309288a4705bc6b14a))
+
+
+### Bug Fixes
+
+* **ci:** stop the release audit calling a healthy publish broken ([a0ac61e](https://github.com/fastcrw/crw/commit/a0ac61e43b7d620da334b0395a0e2c6002b83d8b))
+* **crawl:** classify the current Cloudflare block page as cloudflare ([139a21d](https://github.com/fastcrw/crw/commit/139a21d6801a648ad1c554954b5ca95e8a350b79))
+* **docs:** describe LightPanda as Zig-based, not Rust-based ([b9c1554](https://github.com/fastcrw/crw/commit/b9c15549380f89bff9068957e813e6e6d2bd360f))
+* **v2:** do not claim Firecrawl's DNS answer for any unreachable target ([54108c7](https://github.com/fastcrw/crw/commit/54108c736d11a707c4f653378a843b5f31039f34))
+* **v2:** match Firecrawl's success semantics, final URL and error envelope ([5cfcb0e](https://github.com/fastcrw/crw/commit/5cfcb0ea8eb704e05f8448d660bb89c281e16e92))
+
+
+### Performance
+
+* **renderer:** extend the hydration gate to 500 ([a066f65](https://github.com/fastcrw/crw/commit/a066f655c0680d056e2964c51e9fbe35491706ec))
+* **renderer:** stop spending the JS ladder on a 404 with nothing to hydrate ([fc18b2c](https://github.com/fastcrw/crw/commit/fc18b2cf6f610c50f251ad6686d4b99a660aebbe))
+
 ## [0.36.0](https://github.com/us/crw/compare/v0.35.1...v0.36.0) (2026-09-19)
 
 
